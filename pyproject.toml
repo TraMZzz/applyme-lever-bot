@@ -19,7 +19,8 @@ dependencies = [
 [project.scripts]
 applyme = "applyme.cli:main"
 
-[project.optional-dependencies]
+[dependency-groups]
+# installed by default on `uv sync` (unlike optional-dependencies, which need --extra dev)
 dev = ["pytest>=9.0", "pytest-asyncio>=1.4", "pytest-cov>=7.0", "ruff>=0.15", "basedpyright>=1.39.7"]
 
 [build-system]

@@ -84,7 +84,7 @@ dependencies = [
     { name = "zendriver" },
 ]
 
-[package.optional-dependencies]
+[package.dev-dependencies]
 dev = [
     { name = "basedpyright" },
     { name = "pytest" },
@@ -97,22 +97,25 @@ dev = [
 requires-dist = [
     { name = "2captcha-python", specifier = ">=2.0.7" },
     { name = "anthropic", specifier = ">=0.109" },
-    { name = "basedpyright", marker = "extra == 'dev'", specifier = ">=1.39.7" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "imap-tools", specifier = ">=1.13" },
     { name = "patchright", specifier = ">=1.60.1" },
     { name = "pydantic", extras = ["email"], specifier = ">=2.13" },
     { name = "pydantic-settings", specifier = ">=2.14.1" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=1.4" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=7.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15" },
     { name = "selectolax", specifier = ">=0.4.10" },
     { name = "structlog", specifier = ">=26.1" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "zendriver", specifier = ">=0.15.3" },
 ]
-provides-extras = ["dev"]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "basedpyright", specifier = ">=1.39.7" },
+    { name = "pytest", specifier = ">=9.0" },
+    { name = "pytest-asyncio", specifier = ">=1.4" },
+    { name = "pytest-cov", specifier = ">=7.0" },
+    { name = "ruff", specifier = ">=0.15" },
+]
 
 [[package]]
 name = "asyncio-atexit"
