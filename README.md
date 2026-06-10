@@ -34,7 +34,7 @@ Drive the **real `/apply` form** through a **stealth, direct-CDP browser** that 
 | Engine licensing | zendriver-only (AGPL-3.0) | **patchright** is the permissive swap path for SaaS, but needs its own CDP-tab adapter — documented, not wired in the MVP |
 | Captcha | **in-browser silent pass first**, solver fallback | clean session self-solves invisible hCaptcha for free; solver is insurance |
 | Solver | **CapSolver** → **2Captcha** | AI/token (fast, cheap, `isInvisible`+`rqdata`) with a hybrid fallback, behind one interface |
-| Human behavior | **log-normal delays** + **own numpy Bézier mouse** | non-fixed timing + curved/overshoot/in-element-random clicks (ghost-cursor is dead/no-CDP; zendriver's `mouse_move` is straight-line, so this is our code) |
+| Human behavior | **log-normal delays** + **own stdlib Bézier mouse** | non-fixed timing + curved/overshoot/in-element-random clicks (ghost-cursor is dead/no-CDP; zendriver's `mouse_move` is straight-line, so this is our code) |
 | Proxies | clean local IP (test) · residential pool (scale) | highest trust for 5 applies; datacenter IPs get challenged |
 | Models / output | **Pydantic** + `results.json` + screenshots | lean for a "script"; DB/queue are scale concerns, not built |
 
@@ -97,7 +97,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 │   ├── profile_loader.py        # parse profile.json + fetch/locate resume PDF
 │   ├── browser/
 │   │   ├── engine.py            # zendriver launch, fingerprint, stealth
-│   │   ├── human.py             # log-normal delays, numpy-Bézier CDP mouse
+│   │   ├── human.py             # log-normal delays, stdlib-Bézier CDP mouse
 │   │   └── warmup.py            # session warming
 │   ├── lever/
 │   │   ├── form.py              # parse apply form + cards/baseTemplate JSON
@@ -133,7 +133,7 @@ uv run applyme run --help     # zendriver uses your system Chrome (no download)
 cp .env.example .env          # add CAPSOLVER_API_KEY + mailbox creds (optional for a silent-pass run)
 ```
 
-Key dependencies _(versions verified 2026-06)_ — **core:** `zendriver>=0.15.3`, `httpx>=0.28` (CapSolver REST), `pydantic[email]>=2.12` (`EmailStr` needs `email-validator`) + `pydantic-settings`, `selectolax` (safe HTML parsing); **quality:** `tenacity` (retries), `structlog` (tracing); **optional features:** `patchright>=1.60` (fallback engine), `2captcha-python` (fallback solver), `imap-tools` (confirmation-email evidence). Human mouse/delays use **stdlib `random`/`math`** (no `numpy`). **Dev:** `ruff` (with `ASYNC` rules), `basedpyright` (strict on our code), `pytest` + `pytest-asyncio`.
+Key dependencies _(versions verified 2026-06)_ — **core:** `zendriver>=0.15.3`, `httpx>=0.28` (CapSolver REST), `pydantic[email]>=2.12` (`EmailStr` needs `email-validator`) + `pydantic-settings`, `selectolax` (safe HTML parsing); **quality:** `tenacity` (retries), `structlog` (tracing); **optional features:** `patchright>=1.60` (engine-swap path, not wired), `2captcha-python` (fallback solver), `imap-tools` (confirmation-email evidence). Human mouse/delays use **stdlib `random`/`math`** (no `numpy`). **Dev:** `ruff` (with `ASYNC` rules), `basedpyright` (strict on our code), `pytest` + `pytest-asyncio`.
 
 ## Usage
 
