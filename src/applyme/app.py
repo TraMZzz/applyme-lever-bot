@@ -58,7 +58,9 @@ async def _resolve_answers(
         for card in spec.cards:
             for field in card.fields:
                 if field.input_name in unmapped:
-                    ans = await answer_question(llm_key, profile_summary, field.text, field.options)
+                    ans = await answer_question(
+                        llm_key, profile_summary, field.text, field.options, settings.llm_model
+                    )
                     if ans is not None:
                         answers[field.input_name] = ans
         unmapped = [name for name in unmapped if name not in answers]

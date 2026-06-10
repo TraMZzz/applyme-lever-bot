@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     capsolver_api_key: SecretStr | None = None
     twocaptcha_api_key: SecretStr | None = None
     llm_api_key: SecretStr | None = None
+    llm_model: str = "claude-haiku-4-5-20251001"
     imap_host: str = "imap.gmail.com"
     imap_user: str | None = None
     imap_password: SecretStr | None = None

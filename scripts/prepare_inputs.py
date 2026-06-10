@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Convert the provided inputs into the files the bot reads.
 
-ApplyMe provides `profile.md` (candidate JSON embedded in markdown, with the resume as a URL),
-`resume.md` (resume text), and `vacancies.md` (Lever URLs). This script bridges them to what the
-CLI consumes:
+ApplyMe provides the raw files in `inputs/`: `profile.md` (candidate JSON embedded in markdown,
+with the resume as a URL), `resume.md` (resume text), and `vacancies.md` (Lever URLs). This script
+bridges them to what the CLI consumes under `data/`:
 
-  profile.md   -> data/profile.json   (reshaped to the CandidateProfile model)
-  resume URL   -> data/resume.pdf      (downloaded from profile.md's `resume_url`)
-  vacancies.md -> data/vacancies.txt   (URLs, one per line)
+  inputs/profile.md   -> data/profile.json   (reshaped to the CandidateProfile model)
+  resume URL          -> data/resume.pdf      (downloaded from profile.md's `resume_url`)
+  inputs/vacancies.md -> data/vacancies.txt   (URLs, one per line)
 
 Run once before applying:  `uv run python scripts/prepare_inputs.py`
 Re-run is idempotent. The candidate `email` is copied as-is from profile.md — edit data/profile.json
@@ -26,6 +26,7 @@ from urllib.parse import urlparse
 import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
+INPUTS = ROOT / "inputs"
 DATA = ROOT / "data"
 RESUME_MAX_BYTES = 15 * 1024 * 1024
 RESUME_ALLOWED_HOSTS = {"demo-dashboard.applyme.co", "applyme.co"}
@@ -127,8 +128,10 @@ def write_vacancies(md: str, dest: Path) -> int:
 
 def main() -> None:
     DATA.mkdir(parents=True, exist_ok=True)
-    profile_md = (ROOT / "profile.md").read_text()
-    vacancies_md = (ROOT / "vacancies.md").read_text()
+    if not (INPUTS / "profile.md").exists():
+        sys.exit(f"missing {INPUTS / 'profile.md'} — place the provided files in inputs/")
+    profile_md = (INPUTS / "profile.md").read_text()
+    vacancies_md = (INPUTS / "vacancies.md").read_text()
 
     profile = build_profile(profile_md)
     (DATA / "profile.json").write_text(json.dumps(profile, indent=2))

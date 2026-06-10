@@ -1,8 +1,10 @@
-"""Optional LLM fallback for unmapped required questions (Claude Haiku 4.5), output validated ∈ options."""
+"""Optional LLM fallback for unmapped required questions; output validated ∈ options.
+
+The model id is NOT hardcoded here — it comes from `config.Settings.llm_model`
+(env `JOOBLE_LLM_MODEL`, default `claude-haiku-4-5-20251001`) and is passed in by the caller.
+"""
 
 from anthropic import AsyncAnthropic
-
-MODEL = "claude-haiku-4-5-20251001"
 
 
 def validate_choice(answer: str, options: list[str]) -> str | None:
@@ -18,7 +20,9 @@ def validate_choice(answer: str, options: list[str]) -> str | None:
     return None
 
 
-async def answer_question(api_key: str, profile_summary: str, question: str, options: list[str]) -> str | None:
+async def answer_question(
+    api_key: str, profile_summary: str, question: str, options: list[str], model: str
+) -> str | None:
     """Ask the LLM to answer a card question, then validate the response is within allowed options.
 
     Args:
@@ -26,6 +30,7 @@ async def answer_question(api_key: str, profile_summary: str, question: str, opt
         profile_summary: A short textual description of the candidate profile.
         question: The card question text.
         options: Allowed option strings; empty list means free-text is acceptable.
+        model: Anthropic model id (from Settings.llm_model).
 
     Returns:
         A validated option string, a free-text answer (if no options), or None on mismatch.
@@ -33,7 +38,7 @@ async def answer_question(api_key: str, profile_summary: str, question: str, opt
     client = AsyncAnthropic(api_key=api_key)
     opts = f"Choose exactly one of: {options}" if options else "Answer in <=2 sentences."
     msg = await client.messages.create(
-        model=MODEL,
+        model=model,
         max_tokens=200,
         messages=[{"role": "user", "content": f"Candidate:\n{profile_summary}\n\nQuestion: {question}\n{opts}"}],
     )

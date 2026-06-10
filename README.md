@@ -114,7 +114,9 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 │   │   └── llm.py               # optional LLM fallback for unmapped questions
 │   ├── evidence.py              # screenshots + HTML/HAR snapshots
 │   └── runner.py                # orchestrate the N vacancies, collect results
-├── data/                        # profile.json, resume.pdf (gitignored)
+├── inputs/                      # raw provided: profile.md, resume.md, vacancies.md, test.pdf (gitignored)
+├── scripts/prepare_inputs.py    # inputs/ → data/
+├── data/                        # generated: profile.json, resume.pdf, vacancies.txt (gitignored)
 ├── output/                      # results.json, screenshots/  (gitignored)
 ├── docs/  ├── ARCHITECTURE.md  └── REPORT.md
 └── tests/  # unit + integration; fixtures/ holds captured HTML
@@ -128,11 +130,11 @@ The bot reads three things, all **git-ignored** (supply them under `data/`):
 
 | File | What | Source |
 |---|---|---|
-| `data/profile.json` | candidate profile (→ the `CandidateProfile` model) | generated from the provided `profile.md` |
+| `data/profile.json` | candidate profile (→ the `CandidateProfile` model) | generated from `inputs/profile.md` |
 | `data/resume.pdf` | the résumé to upload | downloaded from the profile's `resume_url` |
-| `data/vacancies.txt` | Lever URLs, one per line | from the provided `vacancies.md` |
+| `data/vacancies.txt` | Lever URLs, one per line | from `inputs/vacancies.md` |
 
-ApplyMe provides these as `.md` (and the résumé as a *URL*), so a one-shot prep step bridges them:
+ApplyMe provides the raw material as `.md` in **`inputs/`** (and the résumé as a *URL*), so a one-shot prep step bridges `inputs/` → `data/`:
 
 ```bash
 uv run python scripts/prepare_inputs.py
