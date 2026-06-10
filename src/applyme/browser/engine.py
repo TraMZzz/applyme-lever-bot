@@ -27,6 +27,11 @@ def _build_config(headful: bool, chrome_path: str | None, sandbox: bool) -> zd.C
         headless=not headful,
         browser_executable_path=find_chrome(chrome_path),
         sandbox=sandbox,
+        # zendriver's default connect window is ~2.75s (0.25s x 10 tries). A cold start of a very
+        # recent Chrome on a busy/desktop machine often needs longer to expose its CDP endpoint,
+        # which surfaces as "Failed to connect to browser". Widen to ~30s (1.0s x 30 tries).
+        browser_connection_timeout=1.0,
+        browser_connection_max_tries=30,
     )
     config.disable_webrtc = True  # plug local-IP leak (clean local IP, no proxy); default True, set explicitly
     return config
