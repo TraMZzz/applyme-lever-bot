@@ -43,6 +43,33 @@ async def fill_form(
         for name in want
     }
     verify_overrides(want, got)  # → AutofillConflict if clobbered
+
+    # I2: Set location text + selectedLocation hidden field when the form has them.
+    if "location" in spec.standard_fields:
+        from applyme.lever.locations import build_selected_location
+
+        loc_text, sel = build_selected_location(profile.location)
+        await human.type_into(tab, '[name="location"]', loc_text)  # type: ignore[attr-defined]
+        sel_escaped = sel.replace("\\", "\\\\").replace('"', '\\"')
+        await tab.evaluate(  # type: ignore[attr-defined]
+            f'document.querySelector(\'[name="selectedLocation"]\').value = "{sel_escaped}"'
+        )
+
+    # I3: Read back all required standard fields and raise if any are still empty.
+    readback: dict[str, str] = {}
+    for name in spec.standard_fields:
+        readback[name] = str(
+            await tab.evaluate(  # type: ignore[attr-defined]
+                f'document.querySelector("[name=\\"{name}\\"]").value'
+            )
+        )
+    missing = missing_required(
+        {k: v for k, v in spec.standard_fields.items() if v.required},
+        readback,
+    )
+    if missing:
+        raise AutofillConflict(f"MISSING_REQUIRED:{missing}")
+
     for card in spec.cards:
         for field in card.fields:
             await human.answer_card_field(tab, field, answers.get(field.input_name, ""))  # type: ignore[attr-defined]

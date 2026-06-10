@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import random
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import structlog
 import zendriver as zd
@@ -149,7 +150,15 @@ async def apply_to_vacancy_with_page(
     solver_used: Literal["none", "capsolver", "twocaptcha"] = "none"
     await human.click(_SUBMIT_SELECTOR)
 
-    response_empty = not str(await tab.evaluate(_HCAPTCHA_RESPONSE_VALUE))
+    # M4: Settle up to ~3 s for the response field to self-fill before calling a solver.
+    response_val = ""
+    for _ in range(6):
+        response_val = str(await tab.evaluate(_HCAPTCHA_RESPONSE_VALUE))
+        if response_val:
+            break
+        await asyncio.sleep(0.5)
+
+    response_empty = not response_val
     challenge_present = bool(await tab.evaluate(_HCAPTCHA_CHALLENGE))
     if (response_empty or challenge_present) and settings:
         capsolver_key = settings.capsolver_api_key.get_secret_value() if settings.capsolver_api_key else None
@@ -158,14 +167,15 @@ async def apply_to_vacancy_with_page(
             from applyme.captcha.base import solve_hcaptcha
 
             ua = str(await tab.evaluate("navigator.userAgent"))
-            token = await solve_hcaptcha(
+            # I1: unpack (token, vendor) — vendor reflects which service actually solved it.
+            token, _vendor = await solve_hcaptcha(
                 page_url=str(v.apply_url),
                 ua=ua,
                 rqdata=spec.rqdata,
                 capsolver_key=capsolver_key,
                 twocaptcha_key=twocaptcha_key,
             )
-            solver_used = "capsolver" if capsolver_key else "twocaptcha"
+            solver_used = cast("Literal['capsolver', 'twocaptcha']", _vendor)
             token_js = token.replace("\\", "\\\\").replace('"', '\\"')
             await tab.evaluate(
                 f'document.querySelector(\'[name="h-captcha-response"]\').value = "{token_js}"'
@@ -224,6 +234,16 @@ async def run_command(args: Any) -> None:
     from pathlib import Path as _Path
 
     settings = Settings()
+
+    # M5: Log Chrome version at startup so a missing/wrong Chrome surfaces before the first apply.
+    from applyme.config import chrome_version, find_chrome
+
+    try:
+        chrome_path = find_chrome(settings.chrome_path)
+        log.info("chrome", path=chrome_path, version=chrome_version(chrome_path))
+    except Exception as _chrome_err:  # noqa: BLE001 — missing Chrome is caught later by launch_browser
+        log.warning("chrome_not_found", error=str(_chrome_err))
+
     from applyme.models import Vacancy as _V
     from applyme.profile_loader import load_profile, load_vacancies
 
@@ -252,11 +272,16 @@ async def run_command(args: Any) -> None:
         failure surfaces as a PermanentError rather than silently routing through an incompatible
         page object.
         """
-        from applyme.browser.engine import launch_browser
+        from applyme.browser.engine import assert_no_webdriver_leak, launch_browser
+        from applyme.browser.warmup import warm_session
 
         try:
+            rng_seed = random.randint(1, 2**31)
             async with launch_browser(headful=headful, chrome_path=settings.chrome_path) as browser:
-                tab = await browser.get(v.apply_url)
+                # I2: warm session (company jobs page → dwell → posting) before /apply.
+                tab = await warm_session(browser, v.company, str(v.apply_url), rng_seed)
+                # I4: abort if the webdriver signal is still detectable after warming.
+                await assert_no_webdriver_leak(tab)
                 return await apply_to_vacancy_with_page(
                     v,
                     profile,
@@ -264,7 +289,7 @@ async def run_command(args: Any) -> None:
                     submit_mode=submit_mode,
                     settings=settings,
                     out_dir=_Path("output"),
-                    rng_seed=random.randint(1, 2**31),
+                    rng_seed=rng_seed,
                 )
         except Exception as _launch_err:  # noqa: BLE001 — classify launch failure, never crash the batch
             log.warning("zendriver_launch_failed", error=str(_launch_err))

@@ -104,8 +104,17 @@ class _FakePage:
         return None
 
     async def evaluate(self, expression: str) -> object:
-        # verify_overrides readback: document.querySelector("[name=\"x\"]").value
+        # Setter: document.querySelector('[name="x"]').value = "..."  — store and return None.
         m = _NAME_RE.search(expression)
+        if m and ".value" in expression and "querySelectorAll" not in expression and "= " in expression:
+            # Extract the assigned string from  .value = "..."
+            eq_idx = expression.find(".value =")
+            if eq_idx != -1:
+                raw = expression[eq_idx + len(".value ="):].strip()
+                if raw.startswith('"') and raw.endswith('"'):
+                    self.typed[m.group(1)] = raw[1:-1]
+            return None
+        # Getter: document.querySelector("[name=\"x\"]").value
         if m and ".value" in expression and "querySelectorAll" not in expression:
             self.clicks.append(m.group(1))
             return self.typed.get(m.group(1), "")

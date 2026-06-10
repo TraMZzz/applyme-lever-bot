@@ -4,7 +4,7 @@ Automated job-application bot for **[jobs.lever.co](https://jobs.lever.co)**. Gi
 
 Built as an engineering take-home: an auto-apply bot for Lever.
 
-> **Status: design / planning phase.** This README documents the agreed approach and the intended interface. Sections marked _(planned)_ describe code that is not yet implemented. The architecture is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); the deliverable report in [`docs/REPORT.md`](docs/REPORT.md).
+> **Status: implemented.** The full apply pipeline (parse → fill → captcha → submit → evidence) is working code. The architecture is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); the deliverable report in [`docs/REPORT.md`](docs/REPORT.md).
 
 ---
 
@@ -83,7 +83,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 
 ---
 
-## Project structure _(planned)_
+## Project structure
 
 ```
 .
@@ -122,7 +122,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 
 ---
 
-## Setup _(planned)_
+## Setup
 
 ```bash
 # Python 3.12+. uv recommended, but NOT required for the grader:
@@ -135,17 +135,24 @@ cp .env.example .env          # add CAPSOLVER_API_KEY + mailbox creds (optional 
 
 Key dependencies _(versions verified 2026-06)_ — **core:** `zendriver>=0.15.3`, `httpx>=0.28` (CapSolver REST), `pydantic[email]>=2.12` (`EmailStr` needs `email-validator`) + `pydantic-settings`, `selectolax` (safe HTML parsing); **quality:** `tenacity` (retries), `structlog` (tracing); **optional features:** `patchright>=1.60` (fallback engine), `2captcha-python` (fallback solver), `imap-tools` (confirmation-email evidence). Human mouse/delays use **stdlib `random`/`math`** (no `numpy`). **Dev:** `ruff` (with `ASYNC` rules), `basedpyright` (strict on our code), `pytest` + `pytest-asyncio`.
 
-## Usage _(planned)_
+## Usage
 
 ```bash
-# Run all vacancies from vacancies.md
-uv run applyme run --vacancies vacancies.md --profile data/profile.json
+# Run all vacancies from a file (dry-run is the default — fills the form, stops before POST)
+uv run applyme run --vacancies data/vacancies.json --profile data/profile.json
 
-# Single posting, headful, dry-run (fill + solve, stop before final POST)
-uv run applyme run --url https://jobs.lever.co/<company>/<id> --no-submit --headful
+# Single posting, headful
+uv run applyme run --url https://jobs.lever.co/<company>/<id> --headful
 
-# Submit mode is explicit and defaults to the safe option (see Status / decisions)
-uv run applyme run --all --submit-mode <real|dry-run|sandbox>
+# Explicit submit mode
+uv run applyme run --vacancies data/vacancies.json --profile data/profile.json \
+    --submit-mode dry-run   # default: fill + solve, stop before POST
+    --submit-mode sandbox   # submit to Lever's leverdemo sandbox
+    --submit-mode real      # submit to the live ATS posting
+
+# Additional options
+#   --headful              open a visible browser window (default: headless)
+#   --max-applies N        cap the number of vacancies processed (default: 5)
 ```
 
 Outputs land in `output/`: `results.json` (one `ApplyResult` per vacancy) plus per-attempt screenshots and HTML snapshots used as the evidence deliverable.
@@ -162,9 +169,9 @@ Each vacancy yields an `ApplyResult` with `status ∈ {SUCCESS, FAILED, CAPTCHA_
 
 | Task deliverable | Where |
 |---|---|
-| Working script | `src/applyme/` _(planned)_ |
+| Working script | `src/applyme/` |
 | Working code (repo/archive) | this repository |
-| Screenshots/video of 5 attempts | `output/screenshots/` _(planned)_ |
+| Screenshots/video of 5 attempts | `output/screenshots/` |
 | Report: apply approach · captcha approach · frontend requests · failures · prod+X1000 | [`docs/REPORT.md`](docs/REPORT.md) |
 | Stack justification | this README + [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#stack-rationale) |
 

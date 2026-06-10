@@ -11,12 +11,19 @@ async def solve_hcaptcha(
     rqdata: str | None,
     capsolver_key: str | None,
     twocaptcha_key: str | None,
-) -> str:
-    """Solve hCaptcha with CapSolver; fall over to 2Captcha on any RetryableError/PermanentError."""
+) -> tuple[str, str]:
+    """Solve hCaptcha with CapSolver; fall over to 2Captcha on any RetryableError/PermanentError.
+
+    Returns:
+        A (token, vendor) tuple where vendor is ``"capsolver"`` or ``"twocaptcha"`` — whichever
+        service actually returned the token.
+    """
     if capsolver_key:
         try:
-            return await capsolver.solve(page_url=page_url, ua=ua, rqdata=rqdata, key=capsolver_key)
+            token = await capsolver.solve(page_url=page_url, ua=ua, rqdata=rqdata, key=capsolver_key)
+            return token, "capsolver"
         except (RetryableError, PermanentError):
             if not twocaptcha_key:
                 raise
-    return await twocaptcha.solve(page_url=page_url, ua=ua, rqdata=rqdata, key=twocaptcha_key)  # type: ignore[arg-type]
+    token = await twocaptcha.solve(page_url=page_url, ua=ua, rqdata=rqdata, key=twocaptcha_key)  # type: ignore[arg-type]
+    return token, "twocaptcha"
