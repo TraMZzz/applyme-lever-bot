@@ -1,0 +1,41 @@
+[project]
+name = "applyme"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "zendriver>=0.15.3",
+    "patchright>=1.60",
+    "httpx>=0.28",
+    "pydantic[email]>=2.12",
+    "pydantic-settings>=2.14",
+    "selectolax>=0.3.21",
+    "tenacity>=9.1",
+    "structlog>=26.1",
+    "2captcha-python>=2.0.7",
+    "imap-tools>=1.13",
+    "anthropic>=0.40",
+]
+
+[project.scripts]
+applyme = "applyme.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.4", "pytest-asyncio>=1.4", "pytest-cov>=5", "ruff>=0.15,<0.16", "basedpyright>=1.39.7"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+[tool.ruff.lint]
+extend-select = ["ASYNC", "I", "UP", "B"]
+
+[tool.pyright]
+typeCheckingMode = "strict"
+reportMissingTypeStubs = false
