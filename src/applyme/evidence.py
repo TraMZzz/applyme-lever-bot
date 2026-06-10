@@ -12,7 +12,7 @@ def redact_html(html: str) -> str:
 
 async def capture(tab: object, out_dir: Path, label: str) -> dict[str, str | None]:
     """Save a screenshot and redacted HTML snapshot to out_dir; failures are silently swallowed."""
-    out_dir.mkdir(parents=True, exist_ok=True)
+    out_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
     paths: dict[str, str | None] = {"screenshot": None, "html": None}
     try:
         shot = out_dir / f"{label}.png"

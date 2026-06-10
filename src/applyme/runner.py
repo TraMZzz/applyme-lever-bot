@@ -3,7 +3,7 @@ import asyncio
 import json
 import random
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import structlog
@@ -16,7 +16,7 @@ log = structlog.get_logger()
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 async def run_one(
@@ -64,8 +64,8 @@ async def run_all(
         if i:
             await asyncio.sleep(sample_delay("inter_apply", rng))  # human-scale gap between applies
         results.append(await run_one(v, apply_fn, rng_seed=rng.randint(1, 2**31)))
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(
+    out.parent.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+    out.write_text(  # noqa: ASYNC240
         json.dumps(
             [{**r.model_dump(mode="json"), "result_string": r.result_string} for r in results],
             indent=2,
