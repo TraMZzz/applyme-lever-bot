@@ -122,6 +122,28 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 
 ---
 
+## Inputs & email
+
+The bot reads three things, all **git-ignored** (supply them under `data/`):
+
+| File | What | Source |
+|---|---|---|
+| `data/profile.json` | candidate profile (→ the `CandidateProfile` model) | generated from the provided `profile.md` |
+| `data/resume.pdf` | the résumé to upload | downloaded from the profile's `resume_url` |
+| `data/vacancies.txt` | Lever URLs, one per line | from the provided `vacancies.md` |
+
+ApplyMe provides these as `.md` (and the résumé as a *URL*), so a one-shot prep step bridges them:
+
+```bash
+uv run python scripts/prepare_inputs.py
+# profile.md → data/profile.json · downloads the résumé → data/resume.pdf · vacancies.md → data/vacancies.txt
+```
+
+**Email — optional, and you do _not_ need to control it.** The `email` in `data/profile.json` is submitted to Lever as the applicant's contact. Lever has **no click-to-verify gate** (success = the `/thanks` redirect), so the application goes through regardless of whether you can read that inbox. A mailbox is used *only* when you set `JOOBLE_IMAP_*`, and then *only* to capture the post-submit confirmation email as **best-effort evidence** — it never blocks a result. So either:
+
+- leave the provided email as-is and **don't** set `JOOBLE_IMAP_*` → the bot skips the confirmation poll (you just won't get a confirmation screenshot); **or**
+- point `email` at a mailbox you control (a free Gmail with an **App Password**, or a catch-all domain) and set `JOOBLE_IMAP_*` → the bot additionally captures the confirmation email.
+
 ## Setup
 
 ```bash
