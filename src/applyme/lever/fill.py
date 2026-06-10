@@ -27,13 +27,17 @@ async def fill_form(tab: object, spec: FormSpec, profile: CandidateProfile,
     """
     file_input = await tab.select('input[type=file]')  # type: ignore[attr-defined]
     async with tab.expect_response(r".*/parseResume.*"):  # type: ignore[attr-defined]
-        await file_input.send_file(str(profile.resume_path))
+        await file_input.send_file(str(profile.resume_path))  # type: ignore[union-attr]
     await _settle(tab)
     want = {"name": profile.full_name, "email": str(profile.email), "phone": profile.phone}
     for name, value in want.items():
         await human.type_into(tab, f'[name="{name}"]', value)  # type: ignore[attr-defined]
-    got = {name: (await tab.evaluate(  # type: ignore[attr-defined]
-        f'document.querySelector("[name=\\"{name}\\"]").value')) for name in want}
+    got: dict[str, str] = {
+        name: str(await tab.evaluate(  # type: ignore[attr-defined]
+            f'document.querySelector("[name=\\"{name}\\"]").value'
+        ))
+        for name in want
+    }
     verify_overrides(want, got)  # → AutofillConflict if clobbered
     for card in spec.cards:
         for field in card.fields:
@@ -45,10 +49,10 @@ async def _settle(tab: object, idle_ms: int = 800) -> None:
     prev: str | None = None
     for _ in range(10):
         await asyncio.sleep(idle_ms / 1000)
-        cur: str = await tab.evaluate(  # type: ignore[attr-defined]
+        cur: str = str(await tab.evaluate(  # type: ignore[attr-defined]
             '[...document.querySelectorAll("[name=name],[name=email],[name=phone]")]'
             '.map(e=>e.value).join("|")'
-        )
+        ))
         if cur == prev:
             return
         prev = cur

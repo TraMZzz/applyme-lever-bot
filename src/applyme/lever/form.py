@@ -1,10 +1,11 @@
 """Parse a Lever apply page into a FormSpec (standard fields + all cards + rqdata)."""
 import json
 import re
+from typing import cast
 
 from selectolax.parser import HTMLParser
 
-from applyme.models import Card, CardField, FieldRef, FormSpec
+from applyme.models import Card, CardField, CardFieldType, FieldRef, FormSpec
 
 _SITEKEY_RE = re.compile(r'data-sitekey="([0-9a-f-]+)"', re.I)
 _STANDARD = ("name", "email", "phone", "org", "location", "selectedLocation")
@@ -39,15 +40,21 @@ def _parse_cards(tree: HTMLParser) -> list[Card]:
     cards: list[Card] = []
     for tpl in tree.css('input[name$="[baseTemplate]"]'):
         raw = tpl.attributes.get("value")
-        if not raw:
+        input_name = tpl.attributes.get("name")
+        if not raw or not input_name:
             continue
         blob = json.loads(raw)
         card_id = blob["id"]
-        prefix = tpl.attributes["name"].split("[")[0]  # 'cards' or 'surveysResponses'
+        prefix = input_name.split("[")[0]  # 'cards' or 'surveysResponses'
         fields = [
-            CardField(field_index=i, field_type=_TYPE_MAP.get(f["type"], "text"), text=f["text"],
-                      required=f.get("required", False), options=[o["text"] for o in f.get("options", [])],
-                      input_name=f"{prefix}[{card_id}][field{i}]")
+            CardField(
+                field_index=i,
+                field_type=cast("CardFieldType", _TYPE_MAP.get(f["type"], "text")),
+                text=f["text"],
+                required=f.get("required", False),
+                options=[o["text"] for o in f.get("options", [])],
+                input_name=f"{prefix}[{card_id}][field{i}]",
+            )
             for i, f in enumerate(blob.get("fields", []))
         ]
         cards.append(Card(card_id=card_id, fields=fields))
