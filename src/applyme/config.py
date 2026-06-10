@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     headful: bool = True
     max_applies: int = 5
     chrome_path: str | None = None
+    chrome_no_sandbox: bool = False  # disable Chrome's sandbox (root/containers/CI); auto-falls-back on connect failure
 
 
 def find_chrome(override: str | None = None) -> str:

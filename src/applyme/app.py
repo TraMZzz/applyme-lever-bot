@@ -279,7 +279,9 @@ async def run_command(args: Any) -> None:
 
         try:
             rng_seed = random.randint(1, 2**31)
-            async with launch_browser(headful=headful, chrome_path=settings.chrome_path) as browser:
+            async with launch_browser(
+                headful=headful, chrome_path=settings.chrome_path, no_sandbox=settings.chrome_no_sandbox
+            ) as browser:
                 # I2: warm session (company jobs page → dwell → posting) before /apply.
                 tab = await warm_session(browser, v.company, str(v.apply_url), rng_seed)
                 # I4: abort if the webdriver signal is still detectable after warming.
