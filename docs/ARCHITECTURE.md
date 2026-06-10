@@ -65,7 +65,7 @@ The only per-posting variation is the cards JSON + which fields are `required`; 
 | `errors` | exception hierarchy (`RetryableError` vs `PermanentError`) for the retry filter | — |
 | `models` | `CandidateProfile`, `WorkExperience`, `Vacancy`, `Card`/`CardField`, `FieldRef`, `FormSpec`, `ApplyResult` | pydantic |
 | `profile_loader` | `data/profile.json` + resume PDF → `CandidateProfile` (egress-guarded) | models |
-| `browser/engine` | zendriver launch (real Chrome, headful), stealth, `webdriver` guard; patchright auto-fallback | zendriver |
+| `browser/engine` | zendriver launch (real Chrome, headful), stealth, `webdriver` guard (zendriver-only; patchright not wired) | zendriver |
 | `browser/human` | Bézier mouse via raw CDP; log-normal delays; typing cadence | stdlib `random`/`math` |
 | `browser/warmup` | Warm the Cloudflare session before `/apply` | engine, human |
 | `lever/form` | Parse standard fields + ALL `cards[…][baseTemplate]` + capture `rqdata` → `FormSpec` | selectolax |
@@ -149,7 +149,7 @@ class ApplyResult(BaseModel):
 
 ### 5.1 Browser & stealth (`browser/`)
 - **Pre-flight (config import / engine):** locate Chrome (platform paths + `CHROME_PATH` override), assert it exists, `--version` within a supported major range; on failure emit an actionable error and **exit non-zero before touching any vacancy**. Document the version contract.
-- **`engine.py`** — `zendriver>=0.15.3`, real system Chrome, **headful**, `zd.Config(headless=False, browser_executable_path=…, lang="en-US", disable_webrtc=True)`; WebGL left real; **`browser_args` minimal, UA not spoofed** (the genuine fingerprint is the stealth — `navigator.webdriver` is genuinely false). **Startup guard:** `evaluate("navigator.webdriver")` must be falsy → else abort `WEBDRIVER_LEAK` (do **not** spoof, do **not** add `--disable-blink-features=AutomationControlled` — real Chrome lacks it; adding it is itself a tell). zendriver's default `--disable-infobars` already suppresses the automation infobar. **`evaluate()` boundary:** JS-set only genuinely hidden inputs (`accountId`, `resumeStorageId`, `selectedLocation`, `h-captcha-response`); visible fields are click+type. **patchright>=1.60** is wired as an **automatic fallback on zendriver launch/connect failure** (`launch_persistent_context(channel="chrome", headless=False, no_viewport=True)`, no custom UA/headers).
+- **`engine.py`** — `zendriver>=0.15.3`, real system Chrome, **headful**, `zd.Config(headless=False, browser_executable_path=…, disable_webrtc=True)` (NB: `Config(lang=…)` is omitted — zendriver rejects the resulting `--lang` arg at `start()`; language follows the system Chrome locale; Chrome's own sandbox is disabled only when running as root/CI); WebGL left real; **`browser_args` minimal, UA not spoofed** (the genuine fingerprint is the stealth — `navigator.webdriver` is genuinely false). **Startup guard:** `evaluate("navigator.webdriver")` must be falsy → else abort `WEBDRIVER_LEAK` (do **not** spoof, do **not** add `--disable-blink-features=AutomationControlled` — real Chrome lacks it; adding it is itself a tell). zendriver's default `--disable-infobars` already suppresses the automation infobar. **`evaluate()` boundary:** JS-set only genuinely hidden inputs (`accountId`, `resumeStorageId`, `selectedLocation`, `h-captcha-response`); visible fields are click+type. **patchright** is a documented permissive engine-swap path (for AGPL/SaaS) but is **NOT wired in the MVP** — a Playwright page can't satisfy the CDP tab interface the flow drives, so a real swap needs its own tab adapter. A zendriver launch failure instead raises a clear error that the runner records as a classified `RETRYABLE_ERROR` (no silent dead path).
 - **`human.py`** *(our code — engine `mouse_move` is straight-line; `python-ghost-cursor` is dead)* — Bézier path (stdlib `math`; smoothstep + perpendicular bow) dispatched per-waypoint via `cdp.input_.dispatch_mouse_event("mouseMoved", …)`, tracking cursor `(x,y)` ourselves, overshoot+correct on long moves, sub-pixel jitter + log-normal button-hold on click. **Log-normal per-action delays** (`random.lognormvariate(log(median), σ)`, classes keystroke/field-think/read/pre-submit, clamped), **real `asyncio.sleep`**. Char-by-char typing + rare typo+backspace on textareas. **Seed `random.Random(seed)` per run; log the seed.**
 - **`warmup.py`** — never hit `/apply` cold: land on `jobs.lever.co/<company>`, run JS, **event-driven scroll** + dwell, then open the posting → Apply. One cookie jar + same fingerprint through the flow; finish before the ~30-min `__cf_bm` idle expiry; wait on `expect_request`/`expect_response`, not sleeps.
 
@@ -226,7 +226,7 @@ Direct-CDP, no Playwright/Selenium shim → no `webdriver`/`Runtime.enable` leak
 | core | `selectolax` | latest | fast, safe HTML parsing (form + 400 re-render + fixtures) |
 | quality | `tenacity` | `>=9.1` | bounded/jittered/filtered async retries |
 | quality | `structlog` | `>=26.1` | per-apply contextvars tracing |
-| feature | `patchright` | `>=1.60` | fallback engine |
+| feature | `patchright` | `>=1.60` | permissive engine-swap path (documented; not wired — needs a CDP-tab adapter) |
 | feature | `2captcha-python` | `>=2.0.7` | fallback solver (`from twocaptcha import AsyncTwoCaptcha`) |
 | feature | `imap-tools` | `>=1.13` | confirmation-email evidence |
 | feature | `anthropic` | latest | optional LLM card-answer fallback |
@@ -278,5 +278,5 @@ docs/    ARCHITECTURE.md · REPORT.md
 4. **Does the authenticated POST re-fingerprint harder than the GET?** Test a `leverdemo` submission.
 5. **Card-schema variance** across the 5 real postings (only Aledade inspected) — fail-closed handling makes this a clean classified outcome, not a crash, but sizes the rules-vs-LLM split.
 6. **Token timing** — confirm ~120s TTL/single-use empirically; keep solve≤90s.
-7. **Chrome version drift** — the pre-flight's supported range vs an auto-updated Chrome; patchright fallback covers a launch failure.
+7. **Chrome version drift** — the pre-flight's supported range vs an auto-updated Chrome; a launch failure raises a clear error → classified `RETRYABLE_ERROR` (no silent dead path).
 8. **Legal/ToS** — authorization before any real-mode/scaled use.

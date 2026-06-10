@@ -31,7 +31,7 @@ Drive the **real `/apply` form** through a **stealth, direct-CDP browser** that 
 |---|---|---|
 | Language | **Python** | best-in-class tools (`zendriver`) are Python-first; Node's stealth ecosystem is decayed |
 | Browser engine | **zendriver** (direct-CDP `nodriver` fork) | no Playwright/Selenium shim → `navigator.webdriver` genuinely false; top performer in a 2026 Cloudflare benchmark (28 OK/3 gated/0 hard-blocked — page access, not hCaptcha-pass) |
-| Fallback engine | **patchright** (`channel=chrome`) | permissively licensed drop-in (zendriver is AGPL-3.0) |
+| Engine licensing | zendriver-only (AGPL-3.0) | **patchright** is the permissive swap path for SaaS, but needs its own CDP-tab adapter — documented, not wired in the MVP |
 | Captcha | **in-browser silent pass first**, solver fallback | clean session self-solves invisible hCaptcha for free; solver is insurance |
 | Solver | **CapSolver** → **2Captcha** | AI/token (fast, cheap, `isInvisible`+`rqdata`) with a hybrid fallback, behind one interface |
 | Human behavior | **log-normal delays** + **own numpy Bézier mouse** | non-fixed timing + curved/overshoot/in-element-random clicks (ghost-cursor is dead/no-CDP; zendriver's `mouse_move` is straight-line, so this is our code) |
@@ -128,7 +128,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 # Python 3.12+. uv recommended, but NOT required for the grader:
 uv sync                       # OR:  pip install -e .
 uv run applyme run --help     # zendriver uses your system Chrome (no download)
-# patchright fallback only:  uv run patchright install chrome
+# (patchright is an optional future engine-swap — not needed to run)
 
 cp .env.example .env          # add CAPSOLVER_API_KEY + mailbox creds (optional for a silent-pass run)
 ```
