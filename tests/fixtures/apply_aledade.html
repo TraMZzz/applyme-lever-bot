@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Apply – Aledade</title>
+</head>
+<body>
+  <div class="application-form">
+    <form method="POST" action="/aledade/6fd40837-0000-0000-0000-000000000000/apply">
+
+      <!-- Standard fields -->
+      <input type="hidden" name="accountId" value="aledade-account-001">
+      <input type="text"   name="name"     required>
+      <input type="email"  name="email"    required>
+      <input type="tel"    name="phone"    required>
+      <input type="text"   name="org">
+      <input type="text"   name="location">
+      <input type="hidden" name="selectedLocation" value="">
+
+      <!-- Resume upload -->
+      <input type="file" name="resume" accept=".pdf,.doc,.docx">
+
+      <!-- hCaptcha widget -->
+      <div class="h-captcha"
+           data-sitekey="e33f87f8-88ec-4e1a-9a13-df9bbb1d8120"
+           data-size="invisible">
+      </div>
+
+      <!-- Custom questions card -->
+      <input type="hidden"
+             name="cards[work-auth-card][baseTemplate]"
+             value="{&quot;id&quot;:&quot;work-auth-card&quot;,&quot;fields&quot;:[{&quot;type&quot;:&quot;multiple-choice&quot;,&quot;text&quot;:&quot;Are you legally authorized to work in the US?&quot;,&quot;required&quot;:true,&quot;options&quot;:[{&quot;text&quot;:&quot;Yes&quot;},{&quot;text&quot;:&quot;No&quot;}]},{&quot;type&quot;:&quot;multiple-choice&quot;,&quot;text&quot;:&quot;Do you require sponsorship?&quot;,&quot;required&quot;:true,&quot;options&quot;:[{&quot;text&quot;:&quot;Yes&quot;},{&quot;text&quot;:&quot;No&quot;}]}]}">
+
+      <button type="submit">Submit application</button>
+    </form>
+  </div>
+</body>
+</html>
