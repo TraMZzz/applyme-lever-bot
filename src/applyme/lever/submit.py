@@ -1,4 +1,5 @@
 """Submit the form (silent-pass first, single-flight) and classify the outcome."""
+
 from dataclasses import dataclass, field
 
 from selectolax.parser import HTMLParser

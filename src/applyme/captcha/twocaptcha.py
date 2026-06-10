@@ -1,4 +1,5 @@
 """2Captcha fallback (hybrid human+ML)."""
+
 from applyme.captcha._const import SITEKEY
 from applyme.errors import SolverTimeout
 

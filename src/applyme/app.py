@@ -1,4 +1,5 @@
 """Wire the end-to-end apply flow: parse → answer → fill → captcha → submit → verify → evidence."""
+
 from __future__ import annotations
 
 import random
@@ -215,8 +216,13 @@ async def run_command(args: Any) -> None:
             async with launch_browser(headful=headful, chrome_path=settings.chrome_path) as browser:
                 tab = await browser.get(v.apply_url)
                 return await apply_to_vacancy_with_page(
-                    v, profile, tab, submit_mode=submit_mode, settings=settings,
-                    out_dir=_Path("output"), rng_seed=random.randint(1, 2**31),
+                    v,
+                    profile,
+                    tab,
+                    submit_mode=submit_mode,
+                    settings=settings,
+                    out_dir=_Path("output"),
+                    rng_seed=random.randint(1, 2**31),
                 )
         except Exception as _launch_err:  # noqa: BLE001 — patchright fallback
             log.warning("zendriver_launch_failed", error=str(_launch_err))
@@ -233,8 +239,13 @@ async def run_command(args: Any) -> None:
                     page = await browser.new_page()
                     await page.goto(v.apply_url)
                     return await apply_to_vacancy_with_page(
-                        v, profile, page, submit_mode=submit_mode, settings=settings,
-                        out_dir=_Path("output"), rng_seed=random.randint(1, 2**31),
+                        v,
+                        profile,
+                        page,
+                        submit_mode=submit_mode,
+                        settings=settings,
+                        out_dir=_Path("output"),
+                        rng_seed=random.randint(1, 2**31),
                     )
             except Exception as _pr_err:  # noqa: BLE001
                 raise PermanentError(f"Both zendriver and patchright failed: {_pr_err}") from _pr_err

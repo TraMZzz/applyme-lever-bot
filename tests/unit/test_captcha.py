@@ -19,7 +19,5 @@ async def test_failover_uses_fallback_when_primary_times_out(monkeypatch):
 
     monkeypatch.setattr(capsolver, "solve", boom)
     monkeypatch.setattr(twocaptcha, "solve", ok)
-    token = await base.solve_hcaptcha(
-        page_url="u", ua="UA", rqdata=None, capsolver_key="k", twocaptcha_key="k2"
-    )
+    token = await base.solve_hcaptcha(page_url="u", ua="UA", rqdata=None, capsolver_key="k", twocaptcha_key="k2")
     assert token == "FALLBACK"

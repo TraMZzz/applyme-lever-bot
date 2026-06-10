@@ -1,4 +1,5 @@
 """Set selectedLocation directly (the /searchLocations autocomplete is hCaptcha-gated)."""
+
 import json
 
 

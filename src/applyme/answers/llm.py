@@ -1,4 +1,5 @@
 """Optional LLM fallback for unmapped required questions (Claude Haiku 4.5), output validated ∈ options."""
+
 from anthropic import AsyncAnthropic
 
 MODEL = "claude-haiku-4-5-20251001"

@@ -1,4 +1,5 @@
 """Per-attempt evidence: redacted HTML snapshot + screenshots + HAR. Capture failures are non-fatal."""
+
 import re
 from pathlib import Path
 

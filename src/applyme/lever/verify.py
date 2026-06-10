@@ -1,4 +1,5 @@
 """Best-effort: capture Lever's confirmation email as evidence (NOT a gate). Links are host-allowlisted."""
+
 import asyncio
 import re
 from urllib.parse import urlparse

@@ -1,5 +1,6 @@
 """Deterministic profile → card-answer mapping; answers constrained to each card's option TEXT."""
-from applyme.models import Card, CandidateProfile, CardField
+
+from applyme.models import CandidateProfile, Card, CardField
 
 
 def _pick(options: list[str], want: str) -> str | None:
@@ -32,9 +33,7 @@ def _answer(profile: CandidateProfile, f: CardField) -> str | None:
     return None
 
 
-def map_answers(
-    profile: CandidateProfile, cards: list[Card]
-) -> tuple[dict[str, str], list[str]]:
+def map_answers(profile: CandidateProfile, cards: list[Card]) -> tuple[dict[str, str], list[str]]:
     """Map all card fields to profile-derived answers.
 
     Returns:

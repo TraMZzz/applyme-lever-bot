@@ -1,4 +1,5 @@
 """CapSolver via async REST (the official SDK is stale: no async + a 60s cap)."""
+
 import asyncio
 
 import httpx

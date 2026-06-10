@@ -1,4 +1,5 @@
 """hCaptcha solving with CapSolver→2Captcha failover. Token shapes are normalised per-vendor."""
+
 from applyme.captcha import capsolver, twocaptcha
 from applyme.captcha._const import SITEKEY as SITEKEY  # re-export: base.SITEKEY is the public name
 from applyme.errors import PermanentError, RetryableError

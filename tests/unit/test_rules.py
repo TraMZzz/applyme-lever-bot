@@ -38,9 +38,7 @@ def _card(text, options, ftype="multiple-choice", required=True):
 
 
 def test_work_authorization_yes_and_sponsorship_no():
-    ans, unmapped = map_answers(
-        _profile(), [_card("Are you legally authorized to work in the US?", ["Yes", "No"])]
-    )
+    ans, unmapped = map_answers(_profile(), [_card("Are you legally authorized to work in the US?", ["Yes", "No"])])
     assert ans["cards[c][field0]"] == "Yes" and not unmapped
 
     ans, _ = map_answers(_profile(), [_card("Do you require sponsorship?", ["Yes", "No"])])
@@ -50,7 +48,5 @@ def test_work_authorization_yes_and_sponsorship_no():
 def test_salary_text_and_unmapped_freetext():
     ans, _ = map_answers(_profile(), [_card("Desired salary?", [], ftype="text")])
     assert ans["cards[c][field0]"] == "140000"
-    ans, unmapped = map_answers(
-        _profile(), [_card("Describe your favourite project", [], ftype="textarea")]
-    )
+    ans, unmapped = map_answers(_profile(), [_card("Describe your favourite project", [], ftype="textarea")])
     assert "cards[c][field0]" in unmapped

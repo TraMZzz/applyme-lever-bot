@@ -1,4 +1,5 @@
 """Orchestrate vacancies sequentially; every vacancy yields exactly one ApplyResult."""
+
 import asyncio
 import json
 import random
