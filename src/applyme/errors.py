@@ -1,0 +1,23 @@
+"""Exception hierarchy: RetryableError is retried by tenacity; PermanentError is not."""
+
+
+class ApplyError(Exception):
+    """Base for all bot errors."""
+
+
+class RetryableError(ApplyError):
+    """Transient — safe to retry (network, Cloudflare managed challenge, solver timeout)."""
+
+
+class PermanentError(ApplyError):
+    """Do not retry (bad config/key, unmapped schema, oversize payload, autofill conflict)."""
+
+
+class NetworkError(RetryableError): ...
+class CloudflareChallenge(RetryableError): ...
+class SolverTimeout(RetryableError): ...
+
+class SolverAuthError(PermanentError): ...
+class SchemaUnmappedError(PermanentError): ...
+class PayloadTooLargeError(PermanentError): ...
+class AutofillConflict(PermanentError): ...
