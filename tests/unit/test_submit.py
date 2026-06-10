@@ -8,7 +8,8 @@ def test_thanks_url_is_success():
 
 def test_400_with_flagged_field_is_failed(fixture):
     out = classify_outcome(final_url="https://jobs.lever.co/aledade/x/apply", http_status=400, body=fixture("error_400.html"))
-    assert out.status in {"FAILED", "CAPTCHA_BLOCKED"}
+    assert out.status == "FAILED"
+    assert out.flagged_fields == ["phone"]
 
 
 def test_400_no_field_flag_is_captcha_blocked():

@@ -23,16 +23,11 @@ def parse_form_html(html: str, posting_url: str) -> FormSpec:
             standard[name] = FieldRef(input_name=name, field_type=node.attributes.get("type", "text") or "text",
                                       required="required" in node.attributes, selector=f'[name="{name}"]')
     sitekey_m = _SITEKEY_RE.search(html)
-    account_id = (tree.css_first('input[name="accountId"]') or _Empty()).attributes.get("value", "")
+    account_node = tree.css_first('input[name="accountId"]')
+    account_id = account_node.attributes.get("value", "") if account_node else ""
     cards = _parse_cards(tree)
     return FormSpec(standard_fields=standard, cards=cards, sitekey=sitekey_m.group(1) if sitekey_m else "",
-                    account_id=account_id or "", posting_id=posting_url.split("/")[-2], rqdata=None)
-
-
-class _Empty:
-    """Sentinel for missing optional nodes (avoids None-checks on attribute access)."""
-
-    attributes: dict[str, str] = {}
+                    account_id=account_id or "", posting_id=posting_url.rstrip("/").split("/")[-2], rqdata=None)
 
 
 def _parse_cards(tree: HTMLParser) -> list[Card]:
