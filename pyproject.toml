@@ -4,23 +4,23 @@ version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
     "zendriver>=0.15.3",
-    "patchright>=1.60",
-    "httpx>=0.28",
-    "pydantic[email]>=2.12",
-    "pydantic-settings>=2.14",
-    "selectolax>=0.3.21",
-    "tenacity>=9.1",
+    "patchright>=1.60.1",
+    "httpx>=0.28.1",
+    "pydantic[email]>=2.13",
+    "pydantic-settings>=2.14.1",
+    "selectolax>=0.4.10",
+    "tenacity>=9.1.4",
     "structlog>=26.1",
     "2captcha-python>=2.0.7",
     "imap-tools>=1.13",
-    "anthropic>=0.40",
+    "anthropic>=0.109",
 ]
 
 [project.scripts]
 applyme = "applyme.cli:main"
 
 [project.optional-dependencies]
-dev = ["pytest>=8.4", "pytest-asyncio>=1.4", "pytest-cov>=5", "ruff>=0.15,<0.16", "basedpyright>=1.39.7"]
+dev = ["pytest>=9.0", "pytest-asyncio>=1.4", "pytest-cov>=7.0", "ruff>=0.15", "basedpyright>=1.39.7"]
 
 [build-system]
 requires = ["hatchling"]
