@@ -1,0 +1,20 @@
+# Build context: only what the image needs. Internal/PII/artifacts excluded.
+.git
+.venv
+**/__pycache__
+*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Internal / PII / secrets (never bake into the image; mount data/ + --env-file at runtime)
+ref/
+inputs/
+data/
+output/
+docs/superpowers/
+.claude/
+CLAUDE.md
+.env
+*.log
+*.har

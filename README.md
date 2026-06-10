@@ -89,6 +89,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 .
 ├── README.md
 ├── pyproject.toml
+├── Dockerfile / .dockerignore  # headless-Chromium image (reproducible browser run / CI)
 ├── .env.example                # CAPSOLVER/2CAPTCHA keys, IMAP_* mailbox, SUBMIT_MODE, LLM key
 ├── src/applyme/
 │   ├── __main__.py / cli.py     # entrypoint:  applyme run …
@@ -115,7 +116,9 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 │   ├── evidence.py              # screenshots + HTML/HAR snapshots
 │   └── runner.py                # orchestrate the N vacancies, collect results
 ├── inputs/                      # raw provided: profile.md, resume.md, vacancies.md, test.pdf (gitignored)
-├── scripts/prepare_inputs.py    # inputs/ → data/
+├── scripts/
+│   ├── prepare_inputs.py        # inputs/ → data/
+│   └── check_chrome.py          # smoke: drive Chrome on a live Lever page (no data/ or keys)
 ├── data/                        # generated: profile.json, resume.pdf, vacancies.txt (gitignored)
 ├── output/                      # results.json, screenshots/  (gitignored)
 ├── docs/  ├── ARCHITECTURE.md  └── REPORT.md
@@ -155,7 +158,14 @@ uv run applyme run --help     # zendriver uses your system Chrome (no download)
 # (patchright is an optional future engine-swap — not needed to run)
 
 cp .env.example .env          # add CAPSOLVER_API_KEY + mailbox creds (optional for a silent-pass run)
+
+# Verify the engine actually drives Chrome — loads a live Lever page through Cloudflare, asserts
+# there's no `navigator.webdriver` leak, and parses the form. Needs nothing but Chrome (no data/, no keys):
+uv run python scripts/check_chrome.py
+# → OK | …/leverdemo/…/apply | navigator.webdriver=false | sitekey=e33f87f8-… | standard_fields=6 | cards=1
 ```
+
+> **No local Chrome / headless box / CI?** Use [Docker](#docker-reproducible-browser-run) — one command builds a Chromium image and runs the same check.
 
 Key dependencies _(versions verified 2026-06)_ — **core:** `zendriver>=0.15.3`, `httpx>=0.28` (CapSolver REST), `pydantic[email]>=2.12` (`EmailStr` needs `email-validator`) + `pydantic-settings`, `selectolax` (safe HTML parsing); **quality:** `tenacity` (retries), `structlog` (tracing); **optional features:** `patchright>=1.60` (engine-swap path, not wired), `2captcha-python` (fallback solver), `imap-tools` (confirmation-email evidence). Human mouse/delays use **stdlib `random`/`math`** (no `numpy`). **Dev:** `ruff` (with `ASYNC` rules), `basedpyright` (strict on our code), `pytest` + `pytest-asyncio`.
 
@@ -177,6 +187,32 @@ uv run applyme run --vacancies data/vacancies.txt --profile data/profile.json --
 ```
 
 Outputs land in `output/`: `results.json` (one `ApplyResult` per vacancy) plus per-attempt screenshots and HTML snapshots used as the evidence deliverable.
+
+---
+
+## Docker: reproducible browser run
+
+A `Dockerfile` ships a headless **Chromium** runtime so the browser path runs anywhere — a server, CI, or a machine with no desktop Chrome — with zero host setup. The image installs Chromium + the project (via `uv sync --frozen`, exact `uv.lock` pins) and runs as a non-root user.
+
+```bash
+docker build -t applyme-bot .
+
+# Default: prove the engine drives Chrome end-to-end (loads a live Lever page, no webdriver leak,
+# parses the form). Needs no data/ or API keys:
+docker run --rm applyme-bot
+# → OK | …/leverdemo/…/apply | navigator.webdriver=false | sitekey=e33f87f8-… | standard_fields=6 | cards=1
+
+# Run the browser-dependent integration tests against real headless Chromium:
+docker run --rm applyme-bot uv run pytest -m integration
+
+# Run a real dry-run apply (fills + captures evidence, stops before POST). Mount your inputs + outputs
+# and pass secrets via --env-file (never baked into the image):
+docker run --rm --env-file .env \
+  -v "$PWD/data:/app/data" -v "$PWD/output:/app/output" \
+  applyme-bot uv run applyme run --vacancies data/vacancies.txt --profile data/profile.json
+```
+
+The container sets `JOOBLE_HEADFUL=false` and `JOOBLE_CHROME_NO_SANDBOX=true` (both required in a container); the same env contract drives `scripts/check_chrome.py` and the integration tests, so they auto-adapt to headless without code changes. A visible/headful run still happens on your own machine (`--headful`).
 
 ---
 

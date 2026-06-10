@@ -30,6 +30,9 @@ build-backend = "hatchling.build"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# Default run = unit tests only (no Chrome needed), so `pytest -q` is green without a browser.
+# Opt in to the browser-dependent tests with `pytest -m integration` (e.g. inside the Docker image).
+addopts = "-m 'not integration and not smoke'"
 markers = [
     "integration: requires a real Chrome browser (excluded from default run)",
     "smoke: end-to-end smoke tests against the live leverdemo sandbox (excluded from default run)",
@@ -42,5 +45,9 @@ target-version = "py312"
 extend-select = ["ASYNC", "I", "UP", "B"]
 
 [tool.pyright]
+# Strict on the shipped code (src/). Tests and glue scripts are excluded: strict typing on
+# pytest fixtures / CDP-driving smoke scripts is high-noise, low-value (the scripts already carry
+# targeted `# pyright:` suppressions). Run `basedpyright tests` ad hoc if you want to check them.
+include = ["src"]
 typeCheckingMode = "strict"
 reportMissingTypeStubs = false

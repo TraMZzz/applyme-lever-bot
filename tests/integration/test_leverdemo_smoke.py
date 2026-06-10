@@ -23,7 +23,9 @@ from applyme.models import CandidateProfile, Vacancy
 
 pytestmark = [
     pytest.mark.smoke,
-    pytest.mark.skipif(os.getenv("RUN_SMOKE") != "1", reason="opt-in live smoke (set RUN_SMOKE=1; needs Chrome + data/)"),
+    pytest.mark.skipif(
+        os.getenv("RUN_SMOKE") != "1", reason="opt-in live smoke (set RUN_SMOKE=1; needs Chrome + data/)"
+    ),
 ]
 
 # A public leverdemo posting (update if it 404s — `https://jobs.lever.co/leverdemo`).

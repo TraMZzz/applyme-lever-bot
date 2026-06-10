@@ -29,9 +29,7 @@ async def main() -> None:
     print(f"Chrome path : {find_chrome(s.chrome_path)}")
     print(f"Chrome ver  : {chrome_version(find_chrome(s.chrome_path))}")
     print(f"mode        : headful={s.headful} no_sandbox={s.chrome_no_sandbox}")
-    async with launch_browser(
-        headful=s.headful, chrome_path=s.chrome_path, no_sandbox=s.chrome_no_sandbox
-    ) as browser:
+    async with launch_browser(headful=s.headful, chrome_path=s.chrome_path, no_sandbox=s.chrome_no_sandbox) as browser:
         tab = await browser.get(LEVER)
         await asyncio.sleep(3)
         await assert_no_webdriver_leak(tab)

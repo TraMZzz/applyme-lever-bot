@@ -70,9 +70,7 @@ async def run_all(
     for i, v in enumerate(vacancies):
         if i:
             await asyncio.sleep(sample_delay("inter_apply", rng))  # human-scale gap between applies
-        results.append(
-            await run_one(v, apply_fn, rng_seed=rng.randint(1, 2**31), per_apply_timeout=per_apply_timeout)
-        )
+        results.append(await run_one(v, apply_fn, rng_seed=rng.randint(1, 2**31), per_apply_timeout=per_apply_timeout))
     out.parent.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
     out.write_text(  # noqa: ASYNC240
         json.dumps(

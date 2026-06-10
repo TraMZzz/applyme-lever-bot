@@ -11,6 +11,20 @@ def fixture():
     return lambda name: (FIXTURES / name).read_text()
 
 
+@pytest.fixture
+def browser_launch_kwargs() -> dict[str, object]:
+    """launch_browser() kwargs derived from env.
+
+    Lets the browser integration tests run headless + no-sandbox inside a container or CI
+    (JOOBLE_HEADFUL=false, JOOBLE_CHROME_NO_SANDBOX=true) while defaulting to headful on a
+    developer machine with a display — the same env contract as scripts/check_chrome.py.
+    """
+    from applyme.config import Settings
+
+    s = Settings()
+    return {"headful": s.headful, "chrome_path": s.chrome_path, "no_sandbox": s.chrome_no_sandbox}
+
+
 # ---------------------------------------------------------------------------
 # Fixtures for the apply-flow integration test (honest fake tab + profile)
 # ---------------------------------------------------------------------------
@@ -110,7 +124,7 @@ class _FakePage:
             # Extract the assigned string from  .value = "..."
             eq_idx = expression.find(".value =")
             if eq_idx != -1:
-                raw = expression[eq_idx + len(".value ="):].strip()
+                raw = expression[eq_idx + len(".value =") :].strip()
                 if raw.startswith('"') and raw.endswith('"'):
                     self.typed[m.group(1)] = raw[1:-1]
             return None

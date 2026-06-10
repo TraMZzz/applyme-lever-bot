@@ -100,7 +100,10 @@ def download_resume(md: str, dest: Path) -> bool:
     url = m.group(1)
     parsed = urlparse(url)
     if parsed.scheme != "https" or (parsed.hostname or "") not in RESUME_ALLOWED_HOSTS:
-        print(f"! resume_url host not allowlisted ({parsed.hostname}); download skipped — place data/resume.pdf manually", file=sys.stderr)
+        print(
+            f"! resume_url host not allowlisted ({parsed.hostname}); download skipped — place data/resume.pdf manually",
+            file=sys.stderr,
+        )
         return False
     try:
         with httpx.stream("GET", url, follow_redirects=False, timeout=30) as r:

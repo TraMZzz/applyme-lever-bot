@@ -32,7 +32,7 @@ Page = zd.Tab
 # CSS hooks shared by every Lever apply page.
 _SUBMIT_SELECTOR = "button[type=submit]"
 _HCAPTCHA_RESPONSE_VALUE = "document.querySelector('[name=\"h-captcha-response\"]')?.value || ''"
-_HCAPTCHA_CHALLENGE = "!!document.querySelector('iframe[src*=\"hcaptcha\"][title*=\"challenge\"]')"
+_HCAPTCHA_CHALLENGE = '!!document.querySelector(\'iframe[src*="hcaptcha"][title*="challenge"]\')'
 
 
 def _now() -> datetime:
@@ -58,9 +58,7 @@ async def _resolve_answers(
         for card in spec.cards:
             for field in card.fields:
                 if field.input_name in unmapped:
-                    ans = await answer_question(
-                        llm_key, profile_summary, field.text, field.options, settings.llm_model
-                    )
+                    ans = await answer_question(llm_key, profile_summary, field.text, field.options, settings.llm_model)
                     if ans is not None:
                         answers[field.input_name] = ans
         unmapped = [name for name in unmapped if name not in answers]
@@ -179,9 +177,7 @@ async def apply_to_vacancy_with_page(
             )
             solver_used = cast("Literal['capsolver', 'twocaptcha']", _vendor)
             token_js = token.replace("\\", "\\\\").replace('"', '\\"')
-            await tab.evaluate(
-                f'document.querySelector(\'[name="h-captcha-response"]\').value = "{token_js}"'
-            )
+            await tab.evaluate(f'document.querySelector(\'[name="h-captcha-response"]\').value = "{token_js}"')
             await human.click(_SUBMIT_SELECTOR)
 
     final_url: str = str(tab.url)
