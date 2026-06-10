@@ -1,5 +1,4 @@
-import pytest
-from applyme.errors import ApplyError, RetryableError, PermanentError, SolverAuthError, AutofillConflict
+from applyme.errors import ApplyError, AutofillConflict, PermanentError, RetryableError, SolverAuthError
 
 
 def test_retryable_and_permanent_are_apply_errors():
@@ -8,5 +7,5 @@ def test_retryable_and_permanent_are_apply_errors():
 
 
 def test_specific_errors_classify_correctly():
-    assert issubclass(SolverAuthError, PermanentError)   # bad API key must NOT be retried
+    assert issubclass(SolverAuthError, PermanentError)  # bad API key must NOT be retried
     assert issubclass(AutofillConflict, PermanentError)

@@ -1,4 +1,5 @@
 """Typed settings (fail-fast) + Chrome locate/version pre-flight."""
+
 import shutil
 import subprocess
 from pathlib import Path

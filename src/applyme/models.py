@@ -1,4 +1,5 @@
 """Pydantic v2 models — the shared contracts (see docs/ARCHITECTURE.md §4)."""
+
 from datetime import datetime
 from enum import StrEnum
 from pathlib import Path
@@ -88,9 +89,7 @@ class FormSpec(BaseModel):
     rqdata: str | None = None
 
 
-Status = Literal[
-    "SUCCESS", "FAILED", "CAPTCHA_BLOCKED", "DRY_RUN_READY", "DUPLICATE_SUSPECTED", "RETRYABLE_ERROR"
-]
+Status = Literal["SUCCESS", "FAILED", "CAPTCHA_BLOCKED", "DRY_RUN_READY", "DUPLICATE_SUSPECTED", "RETRYABLE_ERROR"]
 
 
 class ApplyResult(BaseModel):

@@ -1,5 +1,6 @@
 import pytest
-from applyme.config import Settings, find_chrome, ChromeNotFoundError
+
+from applyme.config import ChromeNotFoundError, Settings, find_chrome
 
 
 def test_settings_loads_from_env(monkeypatch):
@@ -7,8 +8,8 @@ def test_settings_loads_from_env(monkeypatch):
     monkeypatch.setenv("JOOBLE_IMAP_PASSWORD", "pw")
     s = Settings()
     assert s.capsolver_api_key.get_secret_value() == "secret123"
-    assert s.submit_mode == "dry-run"          # safe default
-    assert "secret123" not in repr(s)          # SecretStr masks
+    assert s.submit_mode == "dry-run"  # safe default
+    assert "secret123" not in repr(s)  # SecretStr masks
 
 
 def test_find_chrome_raises_when_missing(monkeypatch):

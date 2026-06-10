@@ -1,4 +1,5 @@
 """Load CandidateProfile from data/profile.json and Vacancy list from a URLs file."""
+
 import json
 import re
 from pathlib import Path
@@ -23,6 +24,13 @@ def load_vacancies(path: Path) -> list[Vacancy]:
         m = _LEVER_RE.search(line)
         if not m:
             continue
-        out.append(Vacancy(company=m["company"], posting_id=m["posting_id"],
-                           url=f"https://jobs.lever.co/{m['company']}/{m['posting_id']}"))
+        out.append(
+            Vacancy.model_validate(
+                {
+                    "company": m["company"],
+                    "posting_id": m["posting_id"],
+                    "url": f"https://jobs.lever.co/{m['company']}/{m['posting_id']}",
+                }
+            )
+        )
     return out
