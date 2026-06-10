@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from applyme.answers.rules import map_answers
-from applyme.models import Card, CardField, CandidateProfile
+from applyme.models import CandidateProfile, Card, CardField
 
 
 def _profile():

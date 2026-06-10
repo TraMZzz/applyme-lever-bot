@@ -14,7 +14,7 @@ async def solve(*, page_url: str, ua: str, rqdata: str | None, key: str) -> str:
 
     solver = AsyncTwoCaptcha(key, defaultTimeout=110, pollingInterval=5)
     try:
-        res = await solver.hcaptcha(
+        res: dict[str, str] = await solver.hcaptcha(  # type: ignore[reportUnknownMemberType]
             sitekey=SITEKEY,
             url=page_url,
             invisible=1,
@@ -23,4 +23,4 @@ async def solve(*, page_url: str, ua: str, rqdata: str | None, key: str) -> str:
         )
     except Exception as e:  # noqa: BLE001 — normalise vendor errors
         raise SolverTimeout(str(e)) from e
-    return extract_token(res)  # type: ignore[no-any-return]
+    return extract_token(res)

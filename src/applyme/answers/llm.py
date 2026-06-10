@@ -36,5 +36,6 @@ async def answer_question(api_key: str, profile_summary: str, question: str, opt
         max_tokens=200,
         messages=[{"role": "user", "content": f"Candidate:\n{profile_summary}\n\nQuestion: {question}\n{opts}"}],
     )
-    text = msg.content[0].text.strip()  # type: ignore[union-attr]
+    raw: str = getattr(msg.content[0], "text", "")
+    text = raw.strip()
     return validate_choice(text, options) if options else text

@@ -1,4 +1,3 @@
-import pytest
 from applyme.captcha import base, capsolver, twocaptcha
 from applyme.errors import SolverTimeout
 
