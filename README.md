@@ -216,6 +216,31 @@ The container sets `JOOBLE_HEADFUL=false` and `JOOBLE_CHROME_NO_SANDBOX=true` (b
 
 ---
 
+## Troubleshooting
+
+**`Failed to connect to browser` at launch** (the log line `zendriver_launch_failed`; its *"running as root → no_sandbox=True"* hint is misleading on macOS — you are not root). The launcher started Chrome but couldn't reach its CDP endpoint in time. In order of likelihood:
+
+1. **Chrome was already running** — a live instance holds the profile so zendriver's process can't expose the debug port. Quit Chrome fully (`⌘Q`, or `pkill -i "Google Chrome"`) and re-run.
+2. **A very recent Chrome cold-starts slower than zendriver's default ~2.75s connect window** (`browser_connection_timeout 0.25s × 10 tries`). This bot already widens it to ~30s (`browser_connection_timeout=1.0`, `browser_connection_max_tries=30` in `browser/engine.py`), which fixes it for current Chrome (verified on **Chrome 149**, headful, macOS). See zendriver [#104](https://github.com/cdpdriver/zendriver/issues/104) / [#142](https://github.com/cdpdriver/zendriver/issues/142), nodriver [#2032](https://github.com/ultrafunkamsterdam/undetected-chromedriver/issues/2032).
+3. **Still failing? Check whether Chrome can expose CDP at all:**
+   ```bash
+   pkill -i "Google Chrome"; sleep 2
+   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+     --remote-debugging-port=9222 --user-data-dir=/tmp/zdtest --no-first-run --no-default-browser-check &
+   sleep 4; curl -s http://localhost:9222/json/version
+   ```
+   - **Returns JSON** → CDP works; it's a launch/timeout issue (step 1–2).
+   - **Nothing / refused** → your Chrome is newer than zendriver 0.15.3 supports (validated to Chrome 146). Pin a supported build instead of touching your real Chrome:
+     ```bash
+     npx -y @puppeteer/browsers install chrome@146
+     JOOBLE_CHROME_PATH="<path it prints>" uv run python scripts/check_chrome.py
+     ```
+     …or just use the [Docker path](#docker-reproducible-browser-run) (bundled Chromium, no host Chrome needed).
+
+**Smoke-test the browser end-to-end** (no `data/` or keys needed): `uv run python scripts/check_chrome.py` — prints `OK | … navigator.webdriver=false | sitekey=… | cards=N` when the engine drives Chrome correctly.
+
+---
+
 ## Result model
 
 Each vacancy yields an `ApplyResult` with `status ∈ {SUCCESS, FAILED, CAPTCHA_BLOCKED, DRY_RUN_READY, DUPLICATE_SUSPECTED, RETRYABLE_ERROR}`, a `reason`, the `final_url`, `http_status`, any `flagged_fields` (parsed from a 400 re-render), solver telemetry, and evidence paths — plus a `result_string` in the brief's literal form (`success` / `failed:<reason>` / `captcha blocked`). Detection: **SUCCESS** = redirect to `/<company>/<id>/thanks`; **FAILED/CAPTCHA_BLOCKED** = HTTP 400 re-rendering the form with `p.error-message`. Details in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#result-model).
