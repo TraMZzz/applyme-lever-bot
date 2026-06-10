@@ -1,0 +1,54 @@
+"""Fill the apply form: resume-first with a parseResume settle-barrier, then verify, then cards."""
+import asyncio
+
+from applyme.errors import AutofillConflict
+from applyme.models import CandidateProfile, FieldRef, FormSpec
+
+FillConflict = AutofillConflict  # alias for the public name used in tests
+
+
+def verify_overrides(want: dict[str, str], got: dict[str, str]) -> None:
+    """Raise if any field we set does not read back as the canonical value (parseResume clobber)."""
+    bad = [k for k, v in want.items() if got.get(k, "") != v]
+    if bad:
+        raise AutofillConflict(f"fields clobbered by autofill: {bad}")
+
+
+def missing_required(fields: dict[str, FieldRef], values: dict[str, str]) -> list[str]:
+    """Return names of required fields whose value is empty or absent."""
+    return [name for name, ref in fields.items() if ref.required and not values.get(name)]
+
+
+async def fill_form(tab: object, spec: FormSpec, profile: CandidateProfile,
+                    answers: dict[str, str], human: object) -> None:
+    """Upload resume → await parseResume + settle → override + verify → fill cards.
+
+    `human` provides typing/clicks.
+    """
+    file_input = await tab.select('input[type=file]')  # type: ignore[attr-defined]
+    async with tab.expect_response(r".*/parseResume.*"):  # type: ignore[attr-defined]
+        await file_input.send_file(str(profile.resume_path))
+    await _settle(tab)
+    want = {"name": profile.full_name, "email": str(profile.email), "phone": profile.phone}
+    for name, value in want.items():
+        await human.type_into(tab, f'[name="{name}"]', value)  # type: ignore[attr-defined]
+    got = {name: (await tab.evaluate(  # type: ignore[attr-defined]
+        f'document.querySelector("[name=\\"{name}\\"]").value')) for name in want}
+    verify_overrides(want, got)  # → AutofillConflict if clobbered
+    for card in spec.cards:
+        for field in card.fields:
+            await human.answer_card_field(tab, field, answers.get(field.input_name, ""))  # type: ignore[attr-defined]
+
+
+async def _settle(tab: object, idle_ms: int = 800) -> None:
+    """Poll standard inputs until their values stop changing (parseResume autofill finished)."""
+    prev: str | None = None
+    for _ in range(10):
+        await asyncio.sleep(idle_ms / 1000)
+        cur: str = await tab.evaluate(  # type: ignore[attr-defined]
+            '[...document.querySelectorAll("[name=name],[name=email],[name=phone]")]'
+            '.map(e=>e.value).join("|")'
+        )
+        if cur == prev:
+            return
+        prev = cur
