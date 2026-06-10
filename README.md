@@ -162,17 +162,14 @@ Key dependencies _(versions verified 2026-06)_ — **core:** `zendriver>=0.15.3`
 ## Usage
 
 ```bash
-# Run all vacancies from a file (dry-run is the default — fills the form, stops before POST)
-uv run applyme run --vacancies data/vacancies.json --profile data/profile.json
+# Run all vacancies from the generated file (dry-run is the default — fills the form, stops before POST)
+uv run applyme run --vacancies data/vacancies.txt --profile data/profile.json
 
 # Single posting, headful
 uv run applyme run --url https://jobs.lever.co/<company>/<id> --headful
 
-# Explicit submit mode
-uv run applyme run --vacancies data/vacancies.json --profile data/profile.json \
-    --submit-mode dry-run   # default: fill + solve, stop before POST
-    --submit-mode sandbox   # submit to Lever's leverdemo sandbox
-    --submit-mode real      # submit to the live ATS posting
+# Explicit submit mode — pick ONE of: dry-run (default) | sandbox (leverdemo) | real (live ATS)
+uv run applyme run --vacancies data/vacancies.txt --profile data/profile.json --submit-mode sandbox
 
 # Additional options
 #   --headful              open a visible browser window (default: headless)
