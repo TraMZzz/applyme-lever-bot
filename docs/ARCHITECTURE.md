@@ -272,7 +272,7 @@ docs/    ARCHITECTURE.md · REPORT.md
 
 ## 12. Open risks — resolve on leverdemo
 
-1. **Is `rqdata` actually emitted?** Capture live `hcaptcha.render/execute` args via the §5.3 hook. If yes, proxyless solving is off and each solve must forward a fresh blob; if the captured token is rejected → the solver path is unreliable, lean on silent-pass.
+1. **Solver fallback is empirically unreliable (TESTED 2026-06-10, live keys):** CapSolver has **dropped hCaptcha** (`ERROR_INVALID_TASK_DATA: not supported`, all task types); 2Captcha **timed out** (110s) on a proxyless, no-`rqdata` solve — consistent with Lever = Enterprise hCaptcha (`secure-api.js`). So the paid-solver fallback is effectively unavailable for Lever today; the **in-browser silent pass is the load-bearing path** (see REPORT §4). `rqdata` capture (§5.3) only helps if a still-supporting provider is found; otherwise rely on the real-browser native `hcaptcha.execute()`.
 2. **Silent-pass rate** for clean-IP + headful + warmed sessions — the load-bearing KPI; measured as the first smoke metric.
 3. **`selectedLocation` exact schema** — capture from a real `/searchLocations` response; validate the injected blob.
 4. **Does the authenticated POST re-fingerprint harder than the GET?** Test a `leverdemo` submission.

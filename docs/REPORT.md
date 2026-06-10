@@ -78,11 +78,18 @@ The brief requires randomized delays, human-like / non-straight-line mouse, and 
 - **No headless / UA / WebDriver signals** — real **system Chrome, headful**, over direct CDP, so `navigator.webdriver` is *genuinely* false (not shimmed); the UA and fingerprint are the real browser's (we don't spoof — a mismatch is the tell). A startup guard asserts `navigator.webdriver` is falsy; `disable_webrtc` plugs the local-IP leak.
 - **Plus session warming** (homepage → dwell/scroll → posting before `/apply`) and a minutes-scale inter-apply delay, so Cloudflare's `__cf_bm` bot-score reflects a natural session.
 
-## 4. What didn't work, and why _(filled after the run)_
+## 4. What didn't work, and why
 
-_Pending the run. Will record per-vacancy: any postings blocked by an interactive hCaptcha that the solver couldn't clear (`CAPTCHA_BLOCKED`), any missing/unmapped required custom-question (`FAILED:MISSING_REQUIRED_FIELD` / `FORM_SCHEMA_UNMAPPED`), Cloudflare managed challenges, and whether the candidate data mismatch (resume = pipeline engineer vs profile = Product Manager) caused any field-level rejections._
+**Live-tested the captcha solvers (2026-06-10, real API keys) — both failed for Lever's hCaptcha:**
 
-Known build-time unknowns being validated: whether Lever enforces Enterprise `rqdata`; the real interactive-challenge rate; whether the authenticated POST re-fingerprints harder than the GET; whether an email-verification step fires.
+- **CapSolver has dropped hCaptcha support.** Every task type (`HCaptchaTaskProxyless`, `HCaptchaTask`, `HCaptchaTurboTaskProxyless`) returns `ERROR_INVALID_TASK_DATA: "This service is not supported."` The account is healthy (balance OK, key valid for other captcha types). This matches 2026 reality: after hCaptcha's legal pressure, the major solvers pulled their public hCaptcha endpoints.
+- **2Captcha timed out** — no token after 110s on a proxyless solve without `rqdata`. Consistent with Lever loading hCaptcha via `secure-api.js` (**Enterprise**), which gates token validity on a fresh per-challenge `rqdata` blob a proxyless, out-of-band solve cannot supply.
+
+**Consequence (anticipated by the design):** the third-party-solver fallback is **empirically unreliable for Lever's Enterprise hCaptcha in 2026** — exactly the build-time risk flagged in §8/§12. The bot therefore leans on the **in-browser silent pass**: a real, clean, headful Chrome lets `hcaptcha.execute()` mint the token natively (the page supplies its own `rqdata`), which is the high-success path for a clean IP + coherent fingerprint + warmed session. The code degrades correctly — CapSolver error → 2Captcha attempt → `CAPTCHA_BLOCKED` recorded honestly if both fail.
+
+**What worked in testing:** the Anthropic LLM fallback (key + `claude-haiku-4-5-20251001` returns valid, option-constrained answers); the full unit/logic suite; the engine config (launches real Chrome in a normal environment); and the solver failover plumbing.
+
+**Still to confirm on a real-browser run (this dev sandbox can't launch Chrome):** the in-browser silent-pass rate on the 5 postings (the load-bearing KPI); whether any posting escalates to an interactive challenge (→ `captcha blocked`, given the solver state); and whether the data mismatch (resume = pipeline engineer vs profile = Product Manager) triggers any field-level rejection.
 
 ## 5. What's needed for production-level + X1000 scale
 
