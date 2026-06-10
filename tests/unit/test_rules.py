@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from applyme.answers.rules import map_answers
+from applyme.answers.rules import is_sensitive, map_answers
 from applyme.models import CandidateProfile, Card, CardField
 
 
@@ -50,3 +50,41 @@ def test_salary_text_and_unmapped_freetext():
     assert ans["cards[c][field0]"] == "140000"
     ans, unmapped = map_answers(_profile(), [_card("Describe your favourite project", [], ftype="textarea")])
     assert "cards[c][field0]" in unmapped
+
+
+def test_consent_not_hijacked_by_state_substring():
+    # "...all statements..." contains the substring "state"; the consent branch must win, and the
+    # state branch must not fire on a non-dropdown field.
+    card = _card(
+        'By clicking "Submit Application" I certify that all statements made are true.',
+        ["Submit Application"],
+        ftype="multiple-select",
+    )
+    ans, unmapped = map_answers(_profile(), [card])
+    assert ans["cards[c][field0]"] == "Submit Application" and not unmapped
+
+
+def test_state_dropdown_resolves_to_full_name():
+    card = _card(
+        "Please list the state you will be located in.",
+        ["Alabama", "California", "New York", "Texas"],
+        ftype="dropdown",
+    )
+    ans, _ = map_answers(_profile(), [card])
+    assert ans["cards[c][field0]"] == "New York"
+
+
+def test_sponsorship_phrased_with_legally_is_not_work_auth():
+    # A sponsorship question that also contains "legally" must resolve via the sponsorship branch.
+    card = _card("Will you now or in future legally require visa sponsorship?", ["Yes", "No"])
+    ans, _ = map_answers(_profile(), [card])
+    assert ans["cards[c][field0]"] == "No"  # requires_sponsorship is False
+
+
+def test_is_sensitive_flags_eligibility_and_eeo_not_skills():
+    assert is_sensitive("Do you now or in the future require visa sponsorship?")
+    assert is_sensitive("Are you a US citizen subject to ITAR/export-control rules?")
+    assert is_sensitive("Please self-identify your gender (EEO).")
+    assert is_sensitive("Have you ever been convicted of a felony?")
+    assert not is_sensitive("Do you have six (6) years of machine learning experience?")
+    assert not is_sensitive("How did you hear about this role?")

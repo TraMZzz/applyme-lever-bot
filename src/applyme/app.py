@@ -39,30 +39,56 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+def _profile_summary(profile: CandidateProfile) -> str:
+    """A compact, decision-relevant profile description fed to the LLM for free-form questions."""
+    parts = [profile.full_name, f"{profile.city}, {profile.state}, {profile.country}"]
+    if profile.total_experience_years is not None:
+        parts.append(f"{profile.total_experience_years} years total experience")
+    if profile.skills:
+        parts.append("skills: " + ", ".join(profile.skills[:12]))
+    parts.append(f"work-authorized: {profile.work_authorized}; requires sponsorship: {profile.requires_sponsorship}")
+    if profile.expected_salary:
+        parts.append(f"expected salary: {profile.expected_salary} {profile.expected_salary_currency}")
+    return " | ".join(parts)
+
+
 async def _resolve_answers(
     profile: CandidateProfile,
     spec: FormSpec,
     settings: Settings | None,
-) -> tuple[dict[str, str], str | None]:
-    """Map answers via rules, fall back to the LLM for unmapped fields, validate against options.
+) -> tuple[dict[str, str], list[str]]:
+    """Map answers via rules, fall back to the LLM for unmapped non-sensitive fields.
 
-    Returns (answers, first_unmapped_required) where first_unmapped_required is None when every
-    required field is answered.
+    Returns (answers, still_unmapped_required). The LLM is SKIPPED for legally/EEO/eligibility
+    questions (is_sensitive) — those must come from profile facts via the rules engine or fail
+    closed, never be invented by the model. Its output is validated ∈ options inside answer_question.
     """
     answers, unmapped = map_answers(profile, spec.cards)
-    if unmapped and settings and settings.llm_api_key:
-        from applyme.answers.llm import answer_question
+    if not unmapped:
+        return answers, []
+    if not (settings and settings.llm_api_key):
+        if settings:
+            log.warning(
+                "llm_fallback_disabled", unmapped=unmapped, hint="set JOOBLE_LLM_API_KEY for free-form questions"
+            )
+        return answers, unmapped
 
-        llm_key = settings.llm_api_key.get_secret_value()
-        profile_summary = f"{profile.full_name}, {profile.location}, {profile.city} {profile.state}"
-        for card in spec.cards:
-            for field in card.fields:
-                if field.input_name in unmapped:
-                    ans = await answer_question(llm_key, profile_summary, field.text, field.options, settings.llm_model)
-                    if ans is not None:
-                        answers[field.input_name] = ans
-        unmapped = [name for name in unmapped if name not in answers]
-    return answers, unmapped[0] if unmapped else None
+    from applyme.answers.llm import answer_question
+    from applyme.answers.rules import is_sensitive
+
+    llm_key = settings.llm_api_key.get_secret_value()
+    profile_summary = _profile_summary(profile)
+    for card in spec.cards:
+        for field in card.fields:
+            if field.input_name not in unmapped:
+                continue
+            if is_sensitive(field.text):
+                log.warning("llm_skipped_sensitive_question", field=field.input_name, question=field.text[:80])
+                continue
+            ans = await answer_question(llm_key, profile_summary, field.text, field.options, settings.llm_model)
+            if ans is not None:
+                answers[field.input_name] = ans
+    return answers, [name for name in unmapped if name not in answers]
 
 
 async def apply_to_vacancy_with_page(
@@ -102,15 +128,19 @@ async def apply_to_vacancy_with_page(
     spec = parse_form_html(html, posting_url=str(v.apply_url))
 
     # 2. Map answers (deterministic rules; LLM fallback when a key is configured).
-    answers, first_unmapped = await _resolve_answers(profile, spec, settings)
-    if first_unmapped is not None:
+    answers, unmapped = await _resolve_answers(profile, spec, settings)
+    if unmapped:
+        ev = await evidence.capture(tab, out_dir / v.company / v.posting_id, label="unmapped")
         return ApplyResult(
             posting_url=str(v.url),
             company=v.company,
             posting_id=v.posting_id,
             status="FAILED",
-            reason=f"FORM_SCHEMA_UNMAPPED:{first_unmapped}",
+            reason=f"FORM_SCHEMA_UNMAPPED:{unmapped[0]}",
+            flagged_fields=unmapped,
             rng_seed=rng_seed,
+            screenshot_paths=[s for s in [ev.get("screenshot")] if s],
+            html_snapshot_path=ev.get("html"),
             started_at=started,
             finished_at=_now(),
         )
@@ -119,6 +149,7 @@ async def apply_to_vacancy_with_page(
     try:
         await fill_form(tab, spec, profile, answers, human)
     except AutofillConflict as e:
+        ev = await evidence.capture(tab, out_dir / v.company / v.posting_id, label="autofill-conflict")
         return ApplyResult(
             posting_url=str(v.url),
             company=v.company,
@@ -126,6 +157,8 @@ async def apply_to_vacancy_with_page(
             status="FAILED",
             reason=f"AUTOFILL_CONFLICT:{e}",
             rng_seed=rng_seed,
+            screenshot_paths=[s for s in [ev.get("screenshot")] if s],
+            html_snapshot_path=ev.get("html"),
             started_at=started,
             finished_at=_now(),
         )
@@ -280,20 +313,29 @@ async def run_command(args: Any) -> None:
             ) as browser:
                 # I2: warm session (company jobs page → dwell → posting) before /apply.
                 tab = await warm_session(browser, v.company, str(v.apply_url), rng_seed)
+                # warm_session dwells on the posting page for Cloudflare trust; now open the actual
+                # /apply form so parse_form_html + fill_form act on the page that has the inputs.
+                await tab.get(str(v.apply_url))
                 # I4: abort if the webdriver signal is still detectable after warming.
                 await assert_no_webdriver_leak(tab)
-                return await apply_to_vacancy_with_page(
-                    v,
-                    profile,
-                    tab,
-                    submit_mode=submit_mode,
-                    settings=settings,
-                    out_dir=_Path("output"),
-                    rng_seed=rng_seed,
-                )
-        except Exception as _launch_err:  # noqa: BLE001 — classify launch failure, never crash the batch
-            log.warning("zendriver_launch_failed", error=str(_launch_err))
-            raise PermanentError(f"zendriver launch/apply failed: {_launch_err}") from _launch_err
+                try:
+                    return await apply_to_vacancy_with_page(
+                        v,
+                        profile,
+                        tab,
+                        submit_mode=submit_mode,
+                        settings=settings,
+                        out_dir=_Path("output"),
+                        rng_seed=rng_seed,
+                    )
+                except Exception:
+                    # Capture page state (screenshot + HTML) before the browser context closes, so a
+                    # failed attempt is diagnosable instead of leaving an empty output/ dir.
+                    await evidence.capture(tab, _Path("output") / v.company / v.posting_id, label="error")
+                    raise
+        except Exception as _apply_err:  # noqa: BLE001 — classify the attempt failure, never crash the batch
+            log.warning("apply_attempt_failed", company=v.company, posting_id=v.posting_id, error=str(_apply_err))
+            raise PermanentError(f"apply attempt failed: {_apply_err}") from _apply_err
 
     results = await run_all(vacancies, apply_fn, out=_Path("output/results.json"))
     for r in results:

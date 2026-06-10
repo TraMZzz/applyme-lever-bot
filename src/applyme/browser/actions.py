@@ -8,6 +8,7 @@ their visible option text/value (matching how the form parser exposes options).
 from __future__ import annotations
 
 import asyncio
+import json
 import random
 from typing import TYPE_CHECKING
 
@@ -76,9 +77,15 @@ class HumanActions:
         await self._click_element(await self.tab.select(selector))
 
     async def type_into(self, tab: zd.Tab, selector: str, text: str) -> None:
-        """Click the field to focus it, then send each character with a per-keystroke delay."""
+        """Focus the field, CLEAR it, then send each character with a per-keystroke delay.
+
+        The clear is essential: Lever's `parseResume` autofills name/email/phone after the resume
+        upload, so typing without clearing appends ("Ethan CalderEthan Calder") and the override
+        read-back fails verify_overrides. clear_input empties the field first.
+        """
         element = await tab.select(selector)
         await self._click_element(element)
+        await element.clear_input()
         for char in text:
             await element.send_keys(char)
             await asyncio.sleep(sample_delay("keystroke", self.rng))
@@ -100,7 +107,28 @@ class HumanActions:
                 option = await tab.find(answer, best_match=True)
             await self._click_element(option)
         elif field.field_type == "dropdown":
-            select = await tab.select(f'[name="{field.input_name}"]')
-            await select.set_value(answer)
+            await self._select_dropdown(tab, field.input_name, answer)
         else:  # text / textarea
             await self.type_into(tab, f'[name="{field.input_name}"]', answer)
+
+    async def _select_dropdown(self, tab: zd.Tab, name: str, answer: str) -> None:
+        """Choose an <option> on a real <select> by visible text or value, dispatching change.
+
+        Element.set_value() maps to CDP DOM.setNodeValue, which does NOT move a <select>'s
+        selectedIndex or fire a change event, so the field would submit empty. We match the option
+        and set value + dispatch input/change exactly as a user interaction would.
+        `getElementsByName` avoids CSS-escaping the bracketed `cards[id][fieldN]` name.
+        """
+        js = (
+            "(() => {"
+            f"  const name = {json.dumps(name)}, want = {json.dumps(answer)};"
+            "  const s = document.getElementsByName(name)[0];"
+            "  if (!s || !s.options) return false;"
+            "  const o = [...s.options].find(o => o.text.trim() === want || o.value === want);"
+            "  if (!o) return false;"
+            "  s.value = o.value;"
+            "  s.dispatchEvent(new Event('input', {bubbles: true}));"
+            "  s.dispatchEvent(new Event('change', {bubbles: true}));"
+            "  return true; })()"
+        )
+        await tab.evaluate(js)

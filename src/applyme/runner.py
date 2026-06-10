@@ -67,16 +67,21 @@ async def run_all(
     """
     rng = random.Random(seed)
     results: list[ApplyResult] = []
+    out.parent.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
     for i, v in enumerate(vacancies):
         if i:
             await asyncio.sleep(sample_delay("inter_apply", rng))  # human-scale gap between applies
         results.append(await run_one(v, apply_fn, rng_seed=rng.randint(1, 2**31), per_apply_timeout=per_apply_timeout))
-    out.parent.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
-    out.write_text(  # noqa: ASYNC240
+        _write_results(out, results)  # incremental: progress survives an interruption / shows up mid-run
+    return results
+
+
+def _write_results(out: Path, results: list[ApplyResult]) -> None:
+    """Serialize results to `out` as JSON, each row carrying an extra `result_string` field."""
+    out.write_text(
         json.dumps(
             [{**r.model_dump(mode="json"), "result_string": r.result_string} for r in results],
             indent=2,
             default=str,
         )
     )
-    return results

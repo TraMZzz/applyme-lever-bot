@@ -1,6 +1,28 @@
 """Deterministic profile → card-answer mapping; answers constrained to each card's option TEXT."""
 
+import re
+
 from applyme.models import CandidateProfile, Card, CardField
+
+# Questions whose factual answer is legally/EEO/eligibility-sensitive. The LLM fallback must NEVER
+# guess these (a fabricated eligibility claim to a real employer is an integrity risk). They are
+# answered only from CandidateProfile facts via _answer() below, or left unmapped to fail closed.
+_SENSITIVE = re.compile(
+    r"\b(sponsor|visa|work\s+authoriz|authorized\s+to\s+work|legally\s+(?:eligible|authorized)|"
+    r"eligible\s+to\s+work|citizen|citizenship|green\s+card|permanent\s+resident|itar|export\s+control|"
+    r"security\s+clearance|clearance|gender|race|ethnic|hispanic|latino|veteran|disab|age|"
+    r"date\s+of\s+birth|criminal|felony|conviction|background\s+check)\b",
+    re.I,
+)
+
+
+def is_sensitive(text: str) -> bool:
+    """True if a question concerns legal eligibility / protected-class / EEO facts.
+
+    The apply flow uses this to skip the LLM fallback for such questions: a factual eligibility
+    answer must come from the profile (via _answer), never be invented by the model.
+    """
+    return bool(_SENSITIVE.search(text))
 
 
 def _pick(options: list[str], want: str) -> str | None:
@@ -12,22 +34,28 @@ def _pick(options: list[str], want: str) -> str | None:
 
 
 def _answer(profile: CandidateProfile, f: CardField) -> str | None:
-    """Map a single CardField to a profile-derived answer, or return None if unmappable."""
+    """Map a single CardField to a profile-derived answer, or return None if unmappable.
+
+    Branch order matters — earlier branches win. Sponsorship is tested before work-authorization
+    (a sponsorship question may contain "legally"); consent/acknowledgement is tested before the
+    state branch ("statements" contains the substring "state"); the state branch is gated to a real
+    dropdown so it cannot hijack a free-text or consent field.
+    """
     t = f.text.lower()
-    if any(k in t for k in ("authorized", "eligible to work", "legally")):
+    if "sponsor" in t or "visa" in t:
+        return _pick(f.options, "Yes" if profile.requires_sponsorship else "No")
+    if any(k in t for k in ("authorized to work", "eligible to work", "work authoriz", "legally")):
         return _pick(f.options, "Yes" if profile.work_authorized else "No")
-    if "sponsor" in t:
-        return _pick(f.options, "No" if not profile.requires_sponsorship else "Yes")
     if "relocate" in t:
         return _pick(f.options, "Yes" if profile.willing_to_relocate else "No")
     if "salary" in t or "compensation" in t:
         return str(profile.expected_salary) if profile.expected_salary else None
-    if "state" in t and f.options:
-        return _pick(f.options, profile.state) or _pick(f.options, profile.city)
-    if any(k in t for k in ("gender", "race", "veteran", "disability")):
-        return _pick(f.options, "decline") or (f.options[-1] if f.options else None)
-    if any(k in t for k in ("agree", "certify", "submit application")):
+    if any(k in t for k in ("i agree", "i certify", "i acknowledge", "i consent", "submit application")):
         return f.options[0] if f.options else "Yes"
+    if f.field_type == "dropdown" and re.search(r"\bstate\b", t):
+        return _pick(f.options, profile.state) or _pick(f.options, profile.city)
+    if any(k in t for k in ("gender", "race", "ethnic", "veteran", "disab")):
+        return _pick(f.options, "decline") or (f.options[-1] if f.options else None)
     if "how did you" in t or "hear about" in t:
         return "LinkedIn"
     return None

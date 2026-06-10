@@ -4,19 +4,47 @@ The model id is NOT hardcoded here — it comes from `config.Settings.llm_model`
 (env `JOOBLE_LLM_MODEL`, default `claude-haiku-4-5-20251001`) and is passed in by the caller.
 """
 
+import re
+
 from anthropic import AsyncAnthropic
 
 
 def validate_choice(answer: str, options: list[str]) -> str | None:
-    """Return the matching option if `answer` normalises to one of `options`, else None.
+    """Return the option `answer` resolves to, tolerating a verbose model reply, else None.
 
-    Normalisation strips leading/trailing whitespace and folds to lowercase for comparison,
-    but returns the original option casing on match.
+    A constrained model usually returns just the option text, but it may add punctuation or a
+    "No\\n\\n**Reasoning:** …" tail. We resolve in increasing-leniency order and, when several
+    options could match (e.g. bare "No" against both "No" and "No, I do not opt in"), prefer the
+    LONGEST option so the most specific choice wins. Comparison is case-insensitive; the original
+    option casing is returned.
     """
     norm = answer.strip().lower()
-    for o in options:
-        if o.strip().lower() == norm:
-            return o
+    if not norm:
+        return None
+    opts = [(o, o.strip().lower()) for o in options]
+
+    # 1. Exact match (the constrained-output happy path).
+    for original, low in opts:
+        if low == norm:
+            return original
+
+    # 2. First non-empty line equals an option (model added a blank line + reasoning below).
+    first_line = next((ln.strip() for ln in norm.splitlines() if ln.strip()), "")
+    for original, low in opts:
+        if low == first_line:
+            return original
+
+    # 3. Bidirectional prefix: answer starts with an option (verbose answer), or an option starts
+    #    with the answer (terse answer vs a long option). Longest match wins.
+    pref = [original for original, low in opts if norm.startswith(low) or low.startswith(norm)]
+    if pref:
+        return max(pref, key=len)
+
+    # 4. An option appears as a standalone word in the answer. Longest match wins.
+    word = [original for original, low in opts if re.search(rf"\b{re.escape(low)}\b", norm)]
+    if word:
+        return max(word, key=len)
+
     return None
 
 
@@ -36,11 +64,23 @@ async def answer_question(
         A validated option string, a free-text answer (if no options), or None on mismatch.
     """
     client = AsyncAnthropic(api_key=api_key)
-    opts = f"Choose exactly one of: {options}" if options else "Answer in <=2 sentences."
+    if options:
+        system = (
+            "You answer one job-application screening question for the given candidate. "
+            "Reply with EXACTLY one of the allowed options, copied verbatim. "
+            "Output only that option text — no punctuation, quotes, reasoning, or extra words."
+        )
+        instruction = f"Allowed options (copy exactly one, verbatim): {options}"
+        max_tokens = 64
+    else:
+        system = "You answer one job-application question for the given candidate, concisely, in at most two sentences."
+        instruction = "Answer in <=2 sentences."
+        max_tokens = 200
     msg = await client.messages.create(
         model=model,
-        max_tokens=200,
-        messages=[{"role": "user", "content": f"Candidate:\n{profile_summary}\n\nQuestion: {question}\n{opts}"}],
+        max_tokens=max_tokens,
+        system=system,
+        messages=[{"role": "user", "content": f"Candidate:\n{profile_summary}\n\nQuestion: {question}\n{instruction}"}],
     )
     raw: str = getattr(msg.content[0], "text", "")
     text = raw.strip()

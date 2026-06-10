@@ -17,7 +17,9 @@ async def capture(tab: object, out_dir: Path, label: str) -> dict[str, str | Non
     paths: dict[str, str | None] = {"screenshot": None, "html": None}
     try:
         shot = out_dir / f"{label}.png"
-        await tab.save_screenshot(str(shot), full_page=True)  # type: ignore[attr-defined]
+        # zendriver's save_screenshot defaults format='jpeg' and does NOT infer it from the .png
+        # filename — pass it explicitly so .png files actually contain PNG bytes.
+        await tab.save_screenshot(str(shot), format="png", full_page=True)  # type: ignore[attr-defined]
         paths["screenshot"] = str(shot)
         snap = out_dir / f"{label}.html"
         snap.write_text(redact_html(await tab.get_content()))  # type: ignore[attr-defined]

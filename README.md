@@ -40,6 +40,10 @@ Drive the **real `/apply` form** through a **stealth, direct-CDP browser** that 
 
 Full justification incl. **why each alternative was rejected**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#stack-rationale).
 
+**Why build it, not adopt a tool (verified June 2026):** there is no sanctioned applicant API (Lever/Greenhouse/Workday submit endpoints are *employer*-credentialed) and no off-the-shelf bot that does unattended Lever submit — the auto-appliers are LinkedIn-focused SaaS, the most-starred OSS (AIHawk) is archived/LinkedIn-only, and the LLM browser-agents (browser-use, Stagehand, Skyvern) gate stealth+CAPTCHA behind a paid cloud and don't defeat invisible Enterprise hCaptcha. Driving the form is the only route, and the products that *do* submit "handle" the captcha by surfacing it to a human or skipping. Build-vs-adopt analysis: [`docs/REPORT.md`](docs/REPORT.md) §1b.
+
+**Custom-question answers** use a rules-first → LLM-fallback → option-validated, **fail-closed** engine: deterministic mapping for structured/high-stakes fields, the LLM (Haiku) only for novel free-form questions (output constrained to the allowed options), and `FORM_SCHEMA_UNMAPPED` rather than a guess when neither resolves. The LLM is **never** consulted for legal/EEO/eligibility questions — those come from profile facts or fail closed (integrity: a synthetic profile applying to real companies).
+
 ---
 
 ## How it works (high level)
