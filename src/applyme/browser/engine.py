@@ -1,6 +1,6 @@
 """zendriver launch with stealth defaults; patchright fallback on launch failure."""
 import contextlib
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 
 import zendriver as zd
 
@@ -22,7 +22,7 @@ async def assert_no_webdriver_leak(tab: zd.Tab) -> None:
 async def launch_browser(
     headful: bool = True,
     chrome_path: str | None = None,
-) -> AsyncIterator[zd.Browser]:
+) -> AsyncGenerator[zd.Browser, None]:
     """Yield a zendriver Browser using real Chrome; minimal args, no UA spoofing."""
     config = zd.Config(headless=not headful, browser_executable_path=find_chrome(chrome_path), lang="en-US")
     config.disable_webrtc = True  # plug local-IP leak (clean local IP, no proxy)
