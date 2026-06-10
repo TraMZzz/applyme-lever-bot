@@ -5,43 +5,85 @@ from __future__ import annotations
 import random
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import structlog
+import zendriver as zd
 
 from applyme import evidence
 from applyme.answers.rules import map_answers
+from applyme.browser.actions import HumanActions
 from applyme.config import Settings
-from applyme.errors import PermanentError
+from applyme.errors import AutofillConflict, PermanentError
+from applyme.lever.fill import fill_form
 from applyme.lever.form import parse_form_html
 from applyme.lever.submit import classify_outcome
-from applyme.models import ApplyResult, CandidateProfile, SubmitMode, Vacancy
+from applyme.models import ApplyResult, CandidateProfile, FormSpec, SubmitMode, Vacancy
 
 log = structlog.get_logger()
+
+# The tab interface the flow drives — a real zendriver Tab (or a fake honestly implementing the
+# same surface in tests). app.py calls get_content / evaluate / url directly; HumanActions,
+# fill_form, and evidence.capture drive select / find / send / save_screenshot. There is no
+# AttributeError fall-through: the methods below ARE the page contract.
+Page = zd.Tab
+
+# CSS hooks shared by every Lever apply page.
+_SUBMIT_SELECTOR = "button[type=submit]"
+_HCAPTCHA_RESPONSE_VALUE = "document.querySelector('[name=\"h-captcha-response\"]')?.value || ''"
+_HCAPTCHA_CHALLENGE = "!!document.querySelector('iframe[src*=\"hcaptcha\"][title*=\"challenge\"]')"
 
 
 def _now() -> datetime:
     return datetime.now(UTC)
 
 
+async def _resolve_answers(
+    profile: CandidateProfile,
+    spec: FormSpec,
+    settings: Settings | None,
+) -> tuple[dict[str, str], str | None]:
+    """Map answers via rules, fall back to the LLM for unmapped fields, validate against options.
+
+    Returns (answers, first_unmapped_required) where first_unmapped_required is None when every
+    required field is answered.
+    """
+    answers, unmapped = map_answers(profile, spec.cards)
+    if unmapped and settings and settings.llm_api_key:
+        from applyme.answers.llm import answer_question
+
+        llm_key = settings.llm_api_key.get_secret_value()
+        profile_summary = f"{profile.full_name}, {profile.location}, {profile.city} {profile.state}"
+        for card in spec.cards:
+            for field in card.fields:
+                if field.input_name in unmapped:
+                    ans = await answer_question(llm_key, profile_summary, field.text, field.options)
+                    if ans is not None:
+                        answers[field.input_name] = ans
+        unmapped = [name for name in unmapped if name not in answers]
+    return answers, unmapped[0] if unmapped else None
+
+
 async def apply_to_vacancy_with_page(
     v: Vacancy,
     profile: CandidateProfile,
-    page: Any,
+    page: Page,
     submit_mode: str,
     *,
     settings: Settings | None = None,
     out_dir: Path = Path("output"),
     rng_seed: int = 0,
 ) -> ApplyResult:
-    """Apply to a single vacancy using an injected page object (real or fake).
+    """Apply to a single vacancy using an injected tab object (real zendriver Tab or a test fake).
 
-    This function is the testable core: browser construction lives in run_command.
+    This function is the testable core: browser construction lives in run_command. It calls real
+    functions (parse_form_html, fill_form via HumanActions, solve_hcaptcha, classify_outcome) on
+    the tab — there is no duck-typed fall-through path.
 
     Args:
         v: The vacancy to apply to.
         profile: Candidate profile with resume_path.
-        page: A duck-typed page/tab object (zendriver Tab or a test fake).
+        page: A zendriver Tab (or a fake honestly implementing the Page protocol).
         submit_mode: One of "dry-run", "sandbox", "real".
         settings: Optional Settings; used for captcha keys and IMAP config.
         out_dir: Root directory for evidence output.
@@ -51,98 +93,92 @@ async def apply_to_vacancy_with_page(
         ApplyResult with the outcome of this application attempt.
     """
     started = _now()
-    # 1. Parse the form
-    html: str = await page.get_content()
+    tab = page
+    human = HumanActions(tab, rng_seed)
+
+    # 1. Parse the form.
+    html: str = await tab.get_content()
     spec = parse_form_html(html, posting_url=str(v.apply_url))
 
-    # 2. Map answers (deterministic rules; LLM fallback if key available)
-    answers, unmapped = map_answers(profile, spec.cards)
-    if unmapped and settings and settings.llm_api_key:
-        from applyme.answers.llm import answer_question
+    # 2. Map answers (deterministic rules; LLM fallback when a key is configured).
+    answers, first_unmapped = await _resolve_answers(profile, spec, settings)
+    if first_unmapped is not None:
+        return ApplyResult(
+            posting_url=str(v.url),
+            company=v.company,
+            posting_id=v.posting_id,
+            status="FAILED",
+            reason=f"FORM_SCHEMA_UNMAPPED:{first_unmapped}",
+            rng_seed=rng_seed,
+            started_at=started,
+            finished_at=_now(),
+        )
 
-        llm_key = settings.llm_api_key.get_secret_value()
-        profile_summary = f"{profile.full_name}, {profile.location}, {profile.city} {profile.state}"
-        for card in spec.cards:
-            for f in card.fields:
-                if f.input_name in unmapped:
-                    ans = await answer_question(llm_key, profile_summary, f.text, f.options)
-                    if ans is not None:
-                        answers[f.input_name] = ans
+    # 3. Fill the form (resume → settle → override → cards). May raise AutofillConflict.
+    try:
+        await fill_form(tab, spec, profile, answers, human)
+    except AutofillConflict as e:
+        return ApplyResult(
+            posting_url=str(v.url),
+            company=v.company,
+            posting_id=v.posting_id,
+            status="FAILED",
+            reason=f"AUTOFILL_CONFLICT:{e}",
+            rng_seed=rng_seed,
+            started_at=started,
+            finished_at=_now(),
+        )
 
-    # 3. Dry-run gate: return early before POST
+    # 4. Dry-run gate: capture evidence and stop BEFORE any submit/POST.
     if submit_mode == SubmitMode.DRY_RUN or submit_mode == "dry-run":
+        evidence_dir = out_dir / v.company / v.posting_id
+        ev = await evidence.capture(tab, evidence_dir, label="dry-run")
         return ApplyResult(
             posting_url=str(v.url),
             company=v.company,
             posting_id=v.posting_id,
             status="DRY_RUN_READY",
             rng_seed=rng_seed,
+            screenshot_paths=[s for s in [ev.get("screenshot")] if s],
+            html_snapshot_path=ev.get("html"),
             started_at=started,
             finished_at=_now(),
         )
 
-    # 4. Fill the form (uses page's duck-typed interface; no-op on fake pages)
-    try:
-        await page.fill_form(spec, profile, answers)
-    except AttributeError:
-        # Fake pages may not implement fill_form — treat as no-op
-        pass
+    # 5. Submit; solve hCaptcha single-flight only if a challenge actually rendered.
+    solver_used: Literal["none", "capsolver", "twocaptcha"] = "none"
+    await human.click(_SUBMIT_SELECTOR)
 
-    # 5. Captcha: silent pass first, then solve if keys available
-    token: str | None = None
-    solver_used: str = "none"
-    try:
-        token = await page.get_captcha_token()
-    except AttributeError:
-        token = None
-
-    if token is None and settings:
+    response_empty = not str(await tab.evaluate(_HCAPTCHA_RESPONSE_VALUE))
+    challenge_present = bool(await tab.evaluate(_HCAPTCHA_CHALLENGE))
+    if (response_empty or challenge_present) and settings:
         capsolver_key = settings.capsolver_api_key.get_secret_value() if settings.capsolver_api_key else None
         twocaptcha_key = settings.twocaptcha_api_key.get_secret_value() if settings.twocaptcha_api_key else None
         if capsolver_key or twocaptcha_key:
             from applyme.captcha.base import solve_hcaptcha
 
-            ua: str = ""
-            try:
-                ua = str(await page.evaluate("navigator.userAgent"))
-            except AttributeError:
-                pass
-            try:
-                token = await solve_hcaptcha(
-                    page_url=str(v.apply_url),
-                    ua=ua,
-                    rqdata=spec.rqdata,
-                    capsolver_key=capsolver_key,
-                    twocaptcha_key=twocaptcha_key,
-                )
-                solver_used = "capsolver" if capsolver_key else "twocaptcha"
-            except PermanentError:
-                raise
-            except Exception:  # noqa: BLE001
-                pass
+            ua = str(await tab.evaluate("navigator.userAgent"))
+            token = await solve_hcaptcha(
+                page_url=str(v.apply_url),
+                ua=ua,
+                rqdata=spec.rqdata,
+                capsolver_key=capsolver_key,
+                twocaptcha_key=twocaptcha_key,
+            )
+            solver_used = "capsolver" if capsolver_key else "twocaptcha"
+            token_js = token.replace("\\", "\\\\").replace('"', '\\"')
+            await tab.evaluate(
+                f'document.querySelector(\'[name="h-captcha-response"]\').value = "{token_js}"'
+            )
+            await human.click(_SUBMIT_SELECTOR)
 
-    # 6. Submit and classify outcome
-    final_url: str = str(v.apply_url)
-    http_status: int = 200
-    body: str = html
-
-    try:
-        submit_result = await page.submit(token=token)
-        final_url = submit_result.get("final_url", final_url)
-        http_status = submit_result.get("status", http_status)
-        body = submit_result.get("body", body)
-    except AttributeError:
-        # Fake pages expose final_url / http_status as attributes
-        try:
-            final_url = str(page.final_url)
-            http_status = int(page.http_status)
-            body = await page.get_content()
-        except AttributeError:
-            pass
+    final_url: str = str(tab.url)
+    http_status: int = int(str(await tab.evaluate("window.__lastStatus || 200")))
+    body: str = await tab.get_content()
 
     outcome = classify_outcome(final_url=final_url, http_status=http_status, body=body)
 
-    # 7. Best-effort confirmation email (only if IMAP configured)
+    # 6. Best-effort confirmation email (only if IMAP configured); never blocks the result.
     confirmation_url: str | None = None
     if settings and settings.imap_user and settings.imap_password:
         from applyme.lever.verify import poll_confirmation
@@ -156,9 +192,9 @@ async def apply_to_vacancy_with_page(
         except Exception:  # noqa: BLE001 — best-effort, never blocks result
             pass
 
-    # 8. Capture evidence (non-fatal)
+    # 7. Capture evidence (non-fatal).
     evidence_dir = out_dir / v.company / v.posting_id
-    ev = await evidence.capture(page, evidence_dir, label="final")
+    ev = await evidence.capture(tab, evidence_dir, label="final")
 
     return ApplyResult(
         posting_url=str(v.url),
@@ -169,7 +205,7 @@ async def apply_to_vacancy_with_page(
         flagged_fields=outcome.flagged_fields,
         final_url=final_url,
         http_status=http_status,
-        solver_used=solver_used,  # type: ignore[arg-type]
+        solver_used=solver_used,
         rng_seed=rng_seed,
         confirmation_email_url=confirmation_url,
         screenshot_paths=[s for s in [ev.get("screenshot")] if s],
@@ -209,10 +245,16 @@ async def run_command(args: Any) -> None:
     from applyme.runner import run_all
 
     async def apply_fn(v: Vacancy) -> ApplyResult:
-        """Launch browser and apply to a single vacancy."""
-        try:
-            from applyme.browser.engine import launch_browser
+        """Launch a real zendriver browser and apply to a single vacancy.
 
+        The apply flow drives a zendriver Tab (CDP mouse events, select/send_keys); a Playwright
+        page does not satisfy that interface, so there is no patchright apply path — a launch
+        failure surfaces as a PermanentError rather than silently routing through an incompatible
+        page object.
+        """
+        from applyme.browser.engine import launch_browser
+
+        try:
             async with launch_browser(headful=headful, chrome_path=settings.chrome_path) as browser:
                 tab = await browser.get(v.apply_url)
                 return await apply_to_vacancy_with_page(
@@ -224,31 +266,9 @@ async def run_command(args: Any) -> None:
                     out_dir=_Path("output"),
                     rng_seed=random.randint(1, 2**31),
                 )
-        except Exception as _launch_err:  # noqa: BLE001 — patchright fallback
+        except Exception as _launch_err:  # noqa: BLE001 — classify launch failure, never crash the batch
             log.warning("zendriver_launch_failed", error=str(_launch_err))
-            try:
-                from patchright.async_api import async_playwright
-
-                async with async_playwright() as pw:
-                    browser = await pw.chromium.launch_persistent_context(
-                        user_data_dir="",
-                        channel="chrome",
-                        headless=not headful,
-                        no_viewport=True,
-                    )
-                    page = await browser.new_page()
-                    await page.goto(v.apply_url)
-                    return await apply_to_vacancy_with_page(
-                        v,
-                        profile,
-                        page,
-                        submit_mode=submit_mode,
-                        settings=settings,
-                        out_dir=_Path("output"),
-                        rng_seed=random.randint(1, 2**31),
-                    )
-            except Exception as _pr_err:  # noqa: BLE001
-                raise PermanentError(f"Both zendriver and patchright failed: {_pr_err}") from _pr_err
+            raise PermanentError(f"zendriver launch/apply failed: {_launch_err}") from _launch_err
 
     results = await run_all(vacancies, apply_fn, out=_Path("output/results.json"))
     for r in results:
