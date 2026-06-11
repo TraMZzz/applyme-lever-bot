@@ -154,8 +154,10 @@ This was the result **before** the silent-pass was hardened, and it pointed stra
 | Browser fingerprint (CreepJS / sannysoft / pixelscan / incolumitas / WebRTC) | clean | not the cause |
 | IP reputation (IPQualityScore) | clean residential | not the cause |
 | **IP tier — mobile / CGNAT** (hCaptcha's *highest*-trust tier, via phone tether) | tested | **still blocked** |
+| **IP geo-coherence — US residential proxy** (US exit + `America/New_York` TZ + US profile, via IPRoyal) | tested | **still blocked** — closes the geo-mismatch hypothesis (the home + tether runs were both Ukrainian IPs against a US profile) |
 | Persistent-profile aging | several runs | still blocked |
 | CDP-input transport (`Input.dispatchMouseEvent`) / `cdp-patches` | researched | **refuted** — the `isTrusted` vector never fires for CDP input, and the coordinate-leak (crbug#1477537) was fixed in Chrome 142+ (this Mac runs 149); `cdp-patches` is archived, self-deprecated, and has no macOS backend |
+| Out-of-band solvers — paid (CapSolver/CaptchaSonic), free/OSS, agentic (Skyvern/browser-use) | researched | **none viable** — CapSolver delisted hCaptcha; free/OSS solvers only answer the *image* challenge (invisible mode renders none); agentic frameworks bundle the same solvers/proxies or fall back to human-in-the-loop; and any out-of-band token scores equal-or-worse than our own already-rejected in-session token |
 
 The mobile-IP test is decisive: it is the single strongest IP lever and it **did not move the result**. With fingerprint, IP reputation, IP tier, and aging all eliminated and the CDP-input hypothesis refuted, the residual is hCaptcha Enterprise's **proprietary WASM behavioural/ML risk layer** (the `n`/`hsw` fingerprint + motion-dynamics gate), which the generic bot-test pages do not exercise.
 

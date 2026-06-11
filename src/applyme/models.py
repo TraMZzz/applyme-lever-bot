@@ -101,7 +101,7 @@ class ApplyResult(BaseModel):
     final_url: str | None = None
     http_status: int | None = None
     flagged_fields: list[str] = Field(default_factory=list)
-    solver_used: Literal["none", "capsolver", "twocaptcha", "captchasonic"] = "none"
+    solver_used: Literal["none", "capsolver", "twocaptcha"] = "none"
     solve_ms: int | None = None
     silent_pass: bool | None = None  # did the invisible hCaptcha self-pass? (the unattended KPI; None until a submit)
     captcha_outcome: Literal["silent_pass", "challenge_rendered", "blocked"] | None = None
