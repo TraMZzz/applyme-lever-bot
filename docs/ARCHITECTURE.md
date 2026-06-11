@@ -25,8 +25,8 @@
 **Locked decisions:**
 1. **Approach** — stealth **browser automation** of the real `/apply` form (not raw requests).
 2. **Submit mode** — `SUBMIT_MODE` defaults to **`dry-run`** (fill+solve, stop before POST). The **committed 5-attempt evidence is generated against Lever's `leverdemo` sandbox** (proves the pipeline without polluting real ATS); `real` runs into the 5 live postings only on explicit flag + confirmation. Real/sandbox/dry-run share one code path, three terminal behaviors.
-3. **Scope** — clean single-process MVP CLI; **Chrome pre-flight is built**; the Enterprise `rqdata`-capture path is **designed and flagged** (not proven — silent-pass means the solver rarely fires). X1000-scale is roadmap only.
-4. **Captcha/proxy** — silent-pass first; real CapSolver key wired as fallback; clean local IP, no proxies.
+3. **Scope** — clean single-process MVP CLI; **Chrome pre-flight is built**; an Enterprise `rqdata` slot is **threaded through but not captured** (`FormSpec.rqdata` is always `None` today — it only matters if a still-supporting solver is found, and silent-pass means the solver rarely fires). X1000-scale is roadmap only.
+4. **Captcha/proxy** — **silent-pass first** (the load-bearing path); a CapSolver→2Captcha fallback is wired but, tested with live keys, **empirically unreliable for Lever's Enterprise hCaptcha** (CapSolver dropped hCaptcha; 2Captcha proxyless times out — REPORT §4); a non-passable challenge is recorded `CAPTCHA_BLOCKED`. Clean local IP, no proxies.
 5. **Profile data** — used as-is, placeholder email swapped for a real mailbox (confirmation-email evidence only).
 6. **Vacancy list** — config-driven; take the first `MAX_APPLIES` (default 5) from the provided list, log any dropped extras (the inputs list a 6th).
 
@@ -40,15 +40,15 @@
 pre-flight: locate Chrome + version check ; validate Settings (fail-fast)
 load CandidateProfile + first MAX_APPLIES Vacancies
 for each vacancy (sequential, log-normal inter-apply delay):
-   fresh browser context ; warmup(session)         # homepage → dwell/scroll → posting (Cloudflare __cf_bm)
+   fresh browser context ; _warm(page)             # company page → dwell → posting (Cloudflare __cf_bm)
    open /apply ; FormSpec = parse(form + ALL cards JSON + rqdata?)
    upload resume (set_input_files) → Playwright auto-waits through /parseResume re-render → override standard fields
        fill cards (answers = rules.map(profile,cards) (+ llm fallback))
    trigger invisible hCaptcha: silent-pass → proceed
         challenge renders → solve (≤90s, CapSolver→2Captcha) → inject h-captcha-response → proceed
    SUBMIT_MODE: dry-run → stop (DRY_RUN_READY) | sandbox → leverdemo | real → POST
-   submit (human click; wait on /apply response; single-flight) ; classify outcome
-   verify.py: best-effort mailbox poll (host-checked link) ; evidence.capture (redacted HTML + screenshots + HAR)
+   submit (human click; settle for silent-pass token; wait_for_load_state) ; classify outcome
+   verify.poll_confirmation: best-effort mailbox poll (host-checked link) ; _capture (full-page screenshot + redacted HTML)
    append ApplyResult (+ result_string)
 write output/results.json
 ```
@@ -70,28 +70,30 @@ The only per-posting variation is the cards JSON + which fields are `required`; 
 | `app_pw` | Single-vacancy flow: warm Cloudflare → `/apply` → parse → `resolve_answers` → `pw_fill` → dry-run evidence OR submit+captcha+confirmation | pw_engine, pw_fill |
 | `lever/form` | Parse standard fields + ALL `cards[…][baseTemplate]` + capture `rqdata` → `FormSpec` | selectolax |
 | `lever/pw_fill` | Resume `set_input_files` → human-override standard fields → answer cards, all via Playwright auto-waiting primitives | human, answers |
-| `lever/locations` | Set `selectedLocation` JSON directly (skip gated autocomplete) | engine |
-| `lever/submit` | Trigger hCaptcha, single-flight submit, classify (`/thanks` vs 400), honor `SUBMIT_MODE` | captcha |
-| `lever/verify` | Best-effort: poll mailbox for Lever confirmation (host-checked link); NOT a gate | imap-tools |
-| `captcha/base` | `Solver` protocol + `NoopSolver`; normalizes the two vendor token shapes | — |
+| `lever/locations` | Set `selectedLocation` JSON directly (skip gated autocomplete) — `build_selected_location` | — |
+| `lever/submit` | `classify_outcome` (`/thanks` vs 400 re-render → SUCCESS/FAILED/CAPTCHA_BLOCKED/RETRYABLE_ERROR) | selectolax |
+| `lever/verify` | Best-effort: `poll_confirmation` mailbox for Lever confirmation (host-checked link); NOT a gate | imap-tools |
+| `captcha/base` | `solve_hcaptcha(...)` CapSolver→2Captcha failover → `(token, vendor)`; normalizes the two token shapes | — |
 | `captcha/capsolver` | CapSolver via async REST (`httpx`), ≤90s deadline | httpx |
 | `captcha/twocaptcha` | 2Captcha fallback (`AsyncTwoCaptcha`) | 2captcha-python |
-| `answers/rules` | Deterministic profile → card-answer mapping (option text) | models |
-| `answers/llm` | Optional LLM fallback for unmapped required questions, output ∈ options | anthropic |
-| `evidence` | Redacted HTML snapshot + screenshots per attempt (`redact_html`) | pw_engine |
-| `runner` | Orchestrate vacancies, inter-apply pacing, owns the shared `httpx.AsyncClient`, writes results | all above |
+| `answers/rules` | Deterministic profile → card-answer mapping (option text); `map_answers` + `is_sensitive` | models |
+| `answers/llm` | Optional LLM fallback for unmapped required questions, output ∈ options; `answer_question` + `validate_choice` | anthropic |
+| `evidence` | `redact_html(html)` ONLY — blanks PII + the live token; the screenshot/HTML capture lives in `app_pw._capture` | — |
+| `runner` | Orchestrate vacancies sequentially, inter-apply pacing, per-vacancy timeout, writes `results.json` incrementally | all above |
 
 ---
 
 ## 4. Data models
 
-`pydantic v2`; value models use `ConfigDict(extra="forbid", frozen=True)`; mutable defaults via `Field(default_factory=...)`.
+`pydantic v2`; the input models (`CandidateProfile`, `WorkExperience`, `Vacancy`) use `ConfigDict(extra="forbid")` (unknown keys rejected, not silently carried); mutable defaults via `Field(default_factory=...)`.
 
 ```python
 class SubmitMode(StrEnum): DRY_RUN="dry-run"; SANDBOX="sandbox"; REAL="real"   # default DRY_RUN
 
 class WorkExperience(BaseModel):
-    company: str | None; title: str | None; start: str | None; end: str | None; description: str | None = None
+    model_config = ConfigDict(extra="forbid")
+    company: str | None = None; title: str | None = None; start: str | None = None; end: str | None = None
+    description: str | None = None
 
 class CandidateProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")          # webhook_url etc. are NOT silently carried
@@ -106,6 +108,7 @@ class CandidateProfile(BaseModel):
     resume_path: Path                                  # local; remote fetch is egress-guarded (§5)
 
 class Vacancy(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     company: str; posting_id: str; url: HttpUrl
     @property
     def apply_url(self) -> str: return f"{str(self.url).rstrip('/')}/apply"
@@ -150,30 +153,30 @@ class ApplyResult(BaseModel):
 ### 5.1 Browser & stealth (`browser/`)
 - **Pre-flight (config import / engine):** locate Chrome (platform paths + `CHROME_PATH` override), assert it exists, `--version` within a supported major range; on failure emit an actionable error and **exit non-zero before touching any vacancy**. Document the version contract.
 - **`pw_engine.py`** — `patchright>=1.60.1` (a stealth Playwright fork with anti-detection patches), driving the **real system Chrome** via `executable_path` (no separate browser download), **headful** by default; UA **not spoofed** (the genuine fingerprint is the stealth — `navigator.webdriver` is genuinely false), Chrome's own sandbox disabled only when running as root/CI (`JOOBLE_CHROME_NO_SANDBOX`). **Startup guard:** `assert_no_webdriver_leak` — `page.evaluate("navigator.webdriver")` must be falsy → else abort `WEBDRIVER_LEAK` (do **not** spoof). **Why patchright rather than raw CDP (the parseResume problem):** uploading the résumé triggers Lever's client-side `parseResume` **re-render that destroys the JS execution context**. Patchright tracks the execution-context lifecycle and **auto-waits through the navigation/re-render**, so `fill()`/`check()`/`select_option()` succeed; a raw-CDP driver's `Runtime.evaluate`/`callFunctionOn` instead **hang or crash the renderer** there (see *Engine — why patchright*). The hidden inputs (`selectedLocation`, `h-captcha-response`) are still set via `eval_on_selector`/`evaluate`; visible fields are click+type.
-- **`human.py`** *(our code — `python-ghost-cursor` is dead; raw `mouse_move` is straight-line)* — Bézier path (stdlib `math`; smoothstep + perpendicular bow) dispatched per-waypoint via **Playwright `page.mouse.move`**, tracking cursor `(x,y)` ourselves, sub-pixel in-element jitter (`jittered_point`) on click. **Log-normal per-action delays** (`random.lognormvariate(log(median), σ)`, classes keystroke/field-think/read/pre-submit, clamped), **real `asyncio.sleep`**. Char-by-char typing. **Seed `random.Random(seed)` per run; log the seed.**
+- **`human.py`** *(our code — `python-ghost-cursor` is dead; raw `mouse_move` is straight-line)* — Bézier path (stdlib `math`; smoothstep + perpendicular bow) dispatched per-waypoint via **Playwright `page.mouse.move`**, tracking cursor `(x,y)` ourselves, sub-pixel in-element jitter (`jittered_point`) on click. **Log-normal per-action delays** (`sample_delay` → `rng.lognormvariate(log(median), σ)`, clamped; classes `keystroke`/`field_think`/`read_page`/`pre_submit`/`inter_apply`), **real `asyncio.sleep`**. Char-by-char typing. **Seed `random.Random(seed)` per run; `rng_seed` is recorded on the `ApplyResult`.**
 - **Warm-up (`app_pw._warm`)** — never hit `/apply` cold: land on `jobs.lever.co/<company>`, dwell, then open the posting before `/apply`. One context + same fingerprint through the flow; finishes before the ~30-min `__cf_bm` idle expiry.
 
 ### 5.2 Lever interaction (`lever/`)
-- **`form.py`** — parse via `selectolax`; read hidden values (`accountId`, `posting_id`, sitekey); decode **every** `cards[<id>][baseTemplate]` (+ EEO `surveysResponses`) JSON → `Card`/`CardField`; **capture `rqdata`** (§5.3). Returns `FormSpec`.
+- **`form.py`** — `parse_form_html` via `selectolax`; read hidden values (`accountId`, sitekey via `data-sitekey`, `posting_id` from the URL); decode **every** `…[baseTemplate]` (both `cards[…]` and EEO `surveysResponses[…]`) JSON → `Card`/`CardField` with the prefix preserved in `input_name`. Returns `FormSpec` with `rqdata=None` (the Enterprise `rqdata` slot is reserved but not yet captured — §5.3).
 - **`pw_fill.py`** — **résumé first, then override (Playwright auto-wait, not a settle-poll):** `set_input_files('[name="resume"]', …)` → let Lever's `parseResume` re-render run → override standard fields with `_human_fill` (Bézier-move to the field, jittered click, `fill("")` to clear any autofill, then per-character `keyboard.type`). Playwright's `fill()`/`locator.wait_for` **auto-wait through the re-render** that destroys the JS context, so no manual barrier/`evaluate`-settle is needed (raw CDP hangs there — see §5.1 / *Engine — why patchright*). Then answer cards: `multiple-choice`/`multiple-select` → `page.check(value=…)`; `dropdown` → `select_option(label=…)`; text/textarea → `fill(…)` — all auto-waiting, bounded by per-call timeouts. The hidden `selectedLocation` blob is set via `eval_on_selector`.
-- **`locations.py`** — set `location` text + hidden `selectedLocation` = `JSON.stringify(locationObject)`. The **exact schema is captured from a real `/searchLocations` response on leverdemo** and the injected blob validated against it pre-submit. Blank for single-location postings; if a 400 flags `location`, the fallback mints a **separate** hCaptcha token for `/searchLocations` (independent of the submit token) rather than deadlocking on the silent-pass path.
-- **`submit.py`** — **silent-pass first**: click Submit (human), let invisible hCaptcha run, detect a challenge iframe; if it renders → solve → inject `h-captcha-response` → resubmit. **Single-flight guard** so our resubmit and Lever's own `hcaptchaTokenExpired` re-click can't both POST. Submit wrapped in `expect_response(r".*/apply.*")` under `asyncio.timeout`. **Classify:** `/thanks` → `SUCCESS`; 400 re-render with `p.error-message` → re-scrape `#application-form`: flagged required fields → `FAILED:MISSING_REQUIRED_FIELD:<f>`; none flagged + captcha unverified → `CAPTCHA_BLOCKED`. `SUBMIT_MODE` gates the terminal step.
+- **`locations.py`** — `build_selected_location(display)` returns `(visible text, json.dumps({"name": display}))`; `pw_fill` types the visible text and sets hidden `selectedLocation` via `eval_on_selector`, skipping the hCaptcha-gated `/searchLocations` autocomplete entirely. The **exact blob schema is still an open leverdemo item** (§12) — the current `{"name": …}` shape is the minimal guess to validate against a real response; no pre-submit validator or 400-driven separate-token fallback ships yet.
+- **`submit.py`** — pure **`classify_outcome(final_url, http_status, body)`**: `/thanks` → `SUCCESS`; otherwise parse the re-rendered body with `selectolax` → flagged required fields → `FAILED:MISSING_REQUIRED_FIELD:<f>`; else a populated `p.error-message` banner (excluding the resume-oversize banner) + no flagged field → `CAPTCHA_BLOCKED:hcaptcha_unverified`; `http_status >= 500` → `RETRYABLE_ERROR`; an unattributable re-render → `FAILED:no_thanks_redirect`. The **submit trigger itself lives in `app_pw._submit_with_captcha`** (silent-pass first): click Submit (human), poll ~3s for `h-captcha-response` to self-fill; only if it stays empty AND a solver key is set → `solve_hcaptcha` → inject the token → re-click. `SUBMIT_MODE` gates whether this terminal step runs at all.
 - **`verify.py`** — best-effort: after `SUCCESS`, poll the mailbox (`imap-tools` in `asyncio.to_thread`, bounded ~120s/5s, `seen=False`, no mark-seen) for a `@hire.lever.co` message; **before visiting any link, assert host `== lever.co` / `*.lever.co`, https, no userinfo**; store `confirmation_email_url`. "No email" is expected — never fails the apply.
 
 ### 5.3 Captcha (`captcha/`)
-- **`base.py`** — `Solver` protocol `async solve_hcaptcha(page_url, sitekey, ua, is_invisible=True, rqdata=None, proxy=None) -> str`; `NoopSolver` for silent-pass-only. Token-shape normalization lives **inside each implementer**.
-- **`capsolver.py` (primary)** — async REST via the shared `httpx.AsyncClient` (the official SDK is stale: no async + 60s cap): `createTask` (`HCaptchaTaskProxyless`, `websiteKey`, `isInvisible=True`, `userAgent`, `enterprisePayload.rqdata` if present) → poll `getTaskResult` → `solution.gRecaptchaResponse`.
+- **Empirical reality (TESTED 2026-06 with live keys — see REPORT §4):** the third-party solvers are **unreliable for Lever's invisible Enterprise hCaptcha**. CapSolver has **dropped hCaptcha** (returns "service not supported"); 2Captcha **times out** on a proxyless, no-`rqdata` solve. The CapSolver→2Captcha fallback is **wired but empirically unavailable**; the load-bearing path is the **in-browser silent pass** (Lever's native `hcaptcha.execute()` self-filling `h-captcha-response`). A challenge that neither silent-passes nor solves is recorded `CAPTCHA_BLOCKED`.
+- **`base.py`** — module-level `async solve_hcaptcha(page_url, ua, rqdata, capsolver_key, twocaptcha_key) -> tuple[str, str]`: try CapSolver, fall over to 2Captcha on any `RetryableError`/`PermanentError`, and return `(token, vendor)` so the caller can record `solver_used`. Per-vendor token-shape normalization lives **inside each implementer**. `_const.SITEKEY` is re-exported here.
+- **`capsolver.py` (primary)** — async REST via a per-call `httpx.AsyncClient` (the official SDK is stale: no async + 60s cap): `createTask` (`HCaptchaTaskProxyless`, `websiteKey`, `isInvisible=True`, `userAgent`, `enterprisePayload.rqdata` if present) → poll `getTaskResult` (≤90s) → `solution.gRecaptchaResponse`; a `createTask` `errorId` raises `SolverAuthError`, the deadline raises `SolverTimeout`.
 - **`twocaptcha.py` (fallback)** — `AsyncTwoCaptcha.hcaptcha(...)` → `result["code"]`.
-- **Timing arithmetic (token TTL ~120s, single-use):** the solver must **return within ~90s** and `solve+POST < 120s`; treat a token older than ~100s as stale → re-solve. `MAX_CAPTCHA_RETRIES = 2` solve→submit cycles, then `CAPTCHA_BLOCKED`; the tenacity solve-loop `stop_after_delay < 120s`. `balance()` check at startup; `report(False)` on rejection.
-- **`rqdata` interception (designed, flagged):** a document-start CDP hook (`Page.addScriptToEvaluateOnNewDocument`) wraps `window.hcaptcha.execute/render` to capture their first-arg object (carrying `rqdata`) into a JS global, read back via `evaluate` → `FormSpec.rqdata`. If Enterprise is detected but `rqdata` can't be captured → `CAPTCHA_BLOCKED:RQDATA_UNAVAILABLE` (don't waste a solver call). **Whether `rqdata` is emitted is resolved empirically on leverdemo** (§12).
+- **Timing (token TTL ~120s, single-use):** the solver caps its poll at ~90s so `solve+POST < 120s`. `rqdata` is threaded through (`FormSpec.rqdata`, currently always `None` — `form.py` does not yet capture it) for the day a still-supporting provider needs it; whether Enterprise emits it is a leverdemo open item (§12). No `Solver` protocol / `NoopSolver` / `balance()`/`report()` ship — silent-pass-only is expressed by simply having no solver key set.
 
 ### 5.4 Answers (`answers/`)
 - **`rules.py` (primary)** — normalize each card question, match to intent, emit an answer **constrained to that card's option text** (work-auth→Yes, sponsorship→No, salary→`expected_salary`, state→from location, relocate→No, EEO→profile/"decline", agreements→checked); returns answer + `unmapped`.
-- **`llm.py` (optional)** — unmapped *required* questions only: Anthropic SDK, **Claude Haiku 4.5** (Sonnet 4.6 upgrade), profile + question + allowed options → answer **validated ∈ options**; low-confidence flagged. Enabled only if `LLM_API_KEY` set.
+- **`llm.py` (optional)** — unmapped *required*, **non-sensitive** questions only (EEO/eligibility are skipped via `is_sensitive`, never invented): Anthropic SDK (`AsyncAnthropic`), model id from `Settings.llm_model` (default `claude-haiku-4-5-20251001`, env `JOOBLE_LLM_MODEL`), profile + question + allowed options → answer **`validate_choice`d ∈ options**. Enabled only if `JOOBLE_LLM_API_KEY` set.
 
 ### 5.5 Orchestration, evidence, CLI
-- **`runner.py`** — first `MAX_APPLIES` vacancies, **sequential with a log-normal inter-apply delay** (minutes-scale; **fresh context/cookie jar per apply**); each under `asyncio.timeout`, wrapped so a failure becomes a result (never aborts the batch); owns one **`httpx.AsyncClient`** (DI-injected into solvers, closed in `finally`); `structlog.bind_contextvars(job_url, attempt)`; writes `results.json` (incl. `result_string`).
-- **`evidence.py`** — full-page screenshots (filled + post-submit), **HTML snapshot with PII + the live `h-captcha-response` token REDACTED** (or snapshot the PII-free `/thanks` page), a **CDP Network → `network.har`** capture across warm→fill→solve→submit (so REPORT §3 cites observed requests), telemetry. **Capture failures are non-fatal**; pre-flight that `output/` is writable at startup. Under `output/screenshots/<company>/`.
+- **`runner.py`** — `run_all` over the first `MAX_APPLIES` vacancies, **sequential with a log-normal inter-apply delay** (`sample_delay("inter_apply", …)`; **fresh browser context per apply** — `app_pw` opens a new `launch_playwright` each call); `run_one` wraps each under `asyncio.timeout(180s)` so a failure becomes a classified `ApplyResult` (PermanentError → FAILED, TimeoutError/other → RETRYABLE_ERROR) and never aborts the batch; `CancelledError` propagates. Writes `results.json` **incrementally** after each vacancy (each row carries an extra `result_string`).
+- **`evidence.py`** — **`redact_html(html)` ONLY**: a regex blanks PII + the live token (`h-captcha-response`, `email`, `phone`, `eeo[*]` field values). It does **not** capture screenshots and there is **no HAR**. The actual evidence capture is **`app_pw._capture`**, which writes a full-page `page.screenshot()` and `redact_html(page.content())` per attempt; failures are suppressed (best-effort). Per attempt the files land at `output/<company>/<posting_id>/<label>.png` + `.html`, where `<label>` ∈ `{"dry-run", "unmapped", "final"}`.
 - **`cli.py`/`config.py`** — argparse single command; `Settings(BaseSettings)` with `SecretStr` + `frozen=True` + fail-fast import; secrets via `.env` only.
 
 ---
@@ -193,17 +196,16 @@ class ApplyResult(BaseModel):
 | DUPLICATE_SUSPECTED | `duplicate` |
 | RETRYABLE_ERROR | `error:<reason>` |
 
-Detection: `SUCCESS` = redirect to `…/thanks` (or 200 body with thanks markup); failure = HTTP 400 re-render. `DUPLICATE_SUSPECTED` is from our own ledger (Lever merges silently and still returns `/thanks`).
+Detection: `SUCCESS` = redirect to `…/thanks`; failure = a 400 re-render (flagged field → `FAILED`, else error banner → `CAPTCHA_BLOCKED`, else `FAILED:no_thanks_redirect`); `http_status >= 500` → `RETRYABLE_ERROR`. `DUPLICATE_SUSPECTED` is a **defined status literal reserved for the roadmap dedupe ledger** (§11) — the MVP ships no ledger, so it is not emitted yet (Lever merges silently and still returns `/thanks`).
 
 ---
 
 ## 7. Error handling & resilience
 
-- **`errors.py` hierarchy:** `ApplyError` → `RetryableError` {`NetworkError`, `CloudflareChallenge`, `SolverTimeout`} vs `PermanentError` {`SolverAuthError`, `SchemaUnmappedError`, `PayloadTooLargeError`, `AutofillConflict`}. `tenacity`'s `retry_if_exception_type(RetryableError)` — never retry a bad API key.
-- **Classify, don't crash** — each vacancy wrapped; exceptions → a result, never abort the batch.
-- **Retries (`tenacity`)** — bounded (`stop_after_attempt`/`_delay`), jittered (`wait_exponential_jitter`), `reraise=True`; `before_sleep` bridged to the `structlog` logger so retry lines carry `job_url`/`attempt`. `AsyncRetrying` for the captcha/mailbox poll loops.
-- **Concurrency** — single `asyncio.run`; `asyncio.timeout` per fragile step; browser/page teardown in `finally`; **never swallow `CancelledError`**.
-- **Idempotency** — own dedupe ledger keyed by `(normalized_email, company, posting_id)`.
+- **`errors.py` hierarchy:** `ApplyError` → `RetryableError` {`NetworkError`, `CloudflareChallenge`, `SolverTimeout`} vs `PermanentError` {`SolverAuthError`, `SchemaUnmappedError`, `PayloadTooLargeError`, `AutofillConflict`, `WebDriverLeak`}. The split exists so retry logic can target `RetryableError` only — never a bad API key. (`tenacity` is a declared dep reserved for that filter; the MVP's resilience is the per-vacancy timeout below, not yet a tenacity retry loop.)
+- **Classify, don't crash** — `runner.run_one` wraps each vacancy: `PermanentError` → `FAILED`, `TimeoutError`/anything else → `RETRYABLE_ERROR`; every divergence becomes an `ApplyResult`, never aborts the batch. `app.apply_fn` re-raises attempt failures as `PermanentError` so the wrapper classifies them.
+- **Timeout, not retry (MVP):** each vacancy runs under `asyncio.timeout(180s)` (`run_one`); fragile in-flow steps are best-effort under `contextlib.suppress`. Browser teardown is in `app_pw`'s `launch_playwright` `finally`. **`CancelledError` is never swallowed** (the catch-all is `except Exception`, not `BaseException`).
+- **Idempotency** — the `(normalized_email, company, posting_id)` dedupe ledger is **roadmap** (§11), not in the MVP.
 
 ---
 
@@ -220,20 +222,20 @@ The submit POST is double-gated: Cloudflare fingerprints TLS/JA4 + HTTP/2 *befor
 | Tier | Package | Floor | Role |
 |---|---|---|---|
 | core | `patchright` | `>=1.60.1` | browser engine (stealth Playwright fork; auto-waits through Lever's parseResume re-render) |
-| core | `httpx` | `>=0.28` | async CapSolver REST + resume fetch |
-| core | `pydantic[email]` | `>=2.12` | models + `EmailStr` (needs `email-validator`) |
-| core | `pydantic-settings` | `>=2.14` | typed config from `.env` |
-| core | `selectolax` | latest | fast, safe HTML parsing (form + 400 re-render + fixtures) |
-| quality | `tenacity` | `>=9.1` | bounded/jittered/filtered async retries |
+| core | `httpx` | `>=0.28.1` | async CapSolver/2Captcha REST |
+| core | `pydantic[email]` | `>=2.13` | models + `EmailStr` (needs `email-validator`) |
+| core | `pydantic-settings` | `>=2.14.1` | typed config from `.env` |
+| core | `selectolax` | `>=0.4.10` | fast, safe HTML parsing (form + 400 re-render + fixtures) |
+| quality | `tenacity` | `>=9.1.4` | bounded/jittered/filtered async retries |
 | quality | `structlog` | `>=26.1` | per-apply contextvars tracing |
 | feature | `2captcha-python` | `>=2.0.7` | fallback solver (`from twocaptcha import AsyncTwoCaptcha`) |
 | feature | `imap-tools` | `>=1.13` | confirmation-email evidence |
-| feature | `anthropic` | latest | optional LLM card-answer fallback |
+| feature | `anthropic` | `>=0.109` | optional LLM card-answer fallback |
 
 **Dropped:** `numpy` (stdlib `math`/`random`), CapSolver SDK (REST via httpx), `curl_cffi` (raw-requests path rejected).
 
 ### Dev tooling
-**uv** (with `pip install -e .` fallback so the grader isn't forced into uv); **ruff** (`>=0.15,<0.16`, `ASYNC` rules on); **basedpyright** (`>=1.39.7`, strict on our code, `reportMissingTypeStubs=false`); **pytest** (`>=8.4`) + **pytest-asyncio** (`>=1.4`, `asyncio_mode="auto"`) + pytest-cov (optional). Python 3.12+, standard GIL build, single package + `src/` layout.
+**uv** (with `pip install -e .` fallback so the grader isn't forced into uv); **ruff** (`>=0.15`, `ASYNC`/`I`/`UP`/`B` rules on); **basedpyright** (`>=1.39.7`, strict on `src/`, `reportMissingTypeStubs=false`); **pytest** (`>=9.0`) + **pytest-asyncio** (`>=1.4`, `asyncio_mode="auto"`) + pytest-cov (`>=7.0`). Dev deps live in `[dependency-groups]` (installed by plain `uv sync`). Python 3.12+, standard GIL build, single package + `src/` layout.
 
 ---
 
@@ -253,11 +255,11 @@ src/applyme/
 ├── app.py (resolve_answers + run_command) · app_pw.py (single-vacancy patchright flow)
 ├── browser/ pw_engine.py · human.py
 ├── lever/   form.py · pw_fill.py · locations.py · submit.py · verify.py
-├── captcha/ base.py · capsolver.py · twocaptcha.py
+├── captcha/ base.py · capsolver.py · twocaptcha.py · _const.py
 ├── answers/ rules.py · llm.py
 ├── evidence.py · runner.py
-data/    profile.json · resume.pdf            (git-ignored)
-output/  results.json · screenshots/<co>/{*.png,snapshot.html,network.har}   (git-ignored)
+data/    profile.json · resume.pdf                         (git-ignored)
+output/  results.json · <company>/<posting_id>/<label>.{png,html}   (git-ignored; <label> ∈ dry-run|unmapped|final)
 tests/   unit/ · integration/ · fixtures/
 docs/    ARCHITECTURE.md · REPORT.md
 ```

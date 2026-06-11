@@ -4,7 +4,7 @@ Automated job-application bot for **[jobs.lever.co](https://jobs.lever.co)**. Gi
 
 Built as an engineering take-home: an auto-apply bot for Lever.
 
-> **Status: implemented.** The full apply pipeline (parse → fill → captcha → submit → evidence) is working code. The architecture is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); the deliverable report in [`docs/REPORT.md`](docs/REPORT.md).
+> **Status: implemented; dry-run verified end-to-end.** The full apply pipeline (parse → fill → captcha → submit → evidence) is working code, and the dry-run path runs end-to-end on the real `leverdemo` `/apply` page (résumé upload → human-filled fields → cards answered → `DRY_RUN_READY` + screenshot), reproducibly in headless Docker. The architecture is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); the deliverable report in [`docs/REPORT.md`](docs/REPORT.md).
 
 ---
 
@@ -61,9 +61,10 @@ for each vacancy:
    open /apply, parse form + custom "cards" JSON
       │
       ▼
-   fill standard fields (human-like timing + mouse)
    map profile → custom-question answers (rules; LLM fallback)
-   upload resume
+   upload resume                                     # triggers parseResume autofill
+   override standard fields (human-like timing + mouse)  # after upload, so our values win
+   answer custom "cards"
       │
       ▼
    trigger hCaptcha:
@@ -79,10 +80,10 @@ for each vacancy:
    on SUCCESS: capture Lever confirmation email as evidence (best-effort; not a gate)
       │
       ▼
-   capture screenshots + HTML snapshot, append ApplyResult
+   capture screenshot + redacted HTML → output/<company>/<id>/<label>.png+.html, append ApplyResult
       │
       ▼
-write output/results.json  +  evidence
+write output/results.json  (one ApplyResult per vacancy, incrementally)
 ```
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, endpoints, captcha config, and success/failure signals.
@@ -102,31 +103,36 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 │   ├── config.py                # settings (pydantic-settings), submit-mode flag
 │   ├── models.py                # CandidateProfile, Vacancy, ApplyResult (pydantic)
 │   ├── profile_loader.py        # parse profile.json + fetch/locate resume PDF
-│   ├── app_pw.py                # single-vacancy flow: warm → /apply → parse → fill → dry-run / submit
+│   ├── errors.py                # exception hierarchy (Retryable/Permanent, WebDriverLeak)
+│   ├── app.py                   # resolve_answers (rules + guarded LLM) + run_command (orchestrate all vacancies)
+│   ├── app_pw.py                # single-vacancy flow: warm → /apply → parse → resolve → fill → dry-run / submit;
+│   │                            #   owns evidence capture (page.screenshot + page.content)
 │   ├── browser/
 │   │   ├── pw_engine.py         # patchright launch (system Chrome via executable_path), webdriver-leak guard
 │   │   └── human.py             # log-normal delays, stdlib-Bézier mouse (via page.mouse)
 │   ├── lever/
 │   │   ├── form.py              # parse apply form + cards/baseTemplate JSON
-│   │   ├── pw_fill.py           # fill standard fields + card answers (auto-waiting page.check/select_option/fill)
+│   │   ├── pw_fill.py           # résumé upload FIRST → human-override standard fields → cards (auto-waiting check/select_option/fill)
 │   │   ├── locations.py         # selectedLocation handling
 │   │   ├── submit.py            # submit + outcome detection (/thanks vs 400)
 │   │   └── verify.py            # best-effort: capture Lever confirmation email (evidence, not a gate)
 │   ├── captcha/
-│   │   ├── base.py              # Solver protocol: solve({sitekey,pageurl,isInvisible,rqdata?,proxy?})
+│   │   ├── base.py              # solve_hcaptcha({sitekey,pageurl,isInvisible,rqdata?,proxy?}) + vendor normalize
+│   │   ├── _const.py            # shared sitekey / endpoint constants
 │   │   ├── capsolver.py
 │   │   └── twocaptcha.py
 │   ├── answers/
 │   │   ├── rules.py             # deterministic profile → card-answer mapping
 │   │   └── llm.py               # optional LLM fallback for unmapped questions
-│   ├── evidence.py              # screenshots + HTML/HAR snapshots
+│   ├── evidence.py              # redact_html() — blank sensitive values before an HTML snapshot is written
+│   │                            #   (the screenshot+HTML capture itself lives in app_pw._capture)
 │   └── runner.py                # orchestrate the N vacancies, collect results
 ├── inputs/                      # raw provided: profile.md, resume.md, vacancies.md, test.pdf (gitignored)
 ├── scripts/
 │   ├── prepare_inputs.py        # inputs/ → data/
 │   └── check_chrome.py          # smoke: drive Chrome on a live Lever page (no data/ or keys)
 ├── data/                        # generated: profile.json, resume.pdf, vacancies.txt (gitignored)
-├── output/                      # results.json, screenshots/  (gitignored)
+├── output/                      # results.json + per-attempt <company>/<id>/<label>.png+.html  (gitignored)
 ├── docs/  ├── ARCHITECTURE.md  └── REPORT.md
 └── tests/  # unit + integration; fixtures/ holds captured HTML
 ```
@@ -191,7 +197,7 @@ uv run applyme run --vacancies data/vacancies.txt --profile data/profile.json --
 #   --max-applies N        cap the number of vacancies processed (default: 5)
 ```
 
-Outputs land in `output/`: `results.json` (one `ApplyResult` per vacancy) plus per-attempt screenshots and HTML snapshots used as the evidence deliverable.
+Outputs land in `output/`: `results.json` (one `ApplyResult` per vacancy, written incrementally) plus per-attempt evidence at `output/<company>/<posting_id>/<label>.png` (full-page screenshot) + `<label>.html` (redacted snapshot), where `<label>` is `dry-run`, `unmapped`, or `final`.
 
 ---
 
@@ -245,7 +251,7 @@ Each vacancy yields an `ApplyResult` with `status ∈ {SUCCESS, FAILED, CAPTCHA_
 |---|---|
 | Working script | `src/applyme/` |
 | Working code (repo/archive) | this repository |
-| Screenshots/video of 5 attempts | `output/screenshots/` |
+| Screenshots/video of 5 attempts | `output/<company>/<posting_id>/*.png` (full-page per attempt) |
 | Report: apply approach · captcha approach · frontend requests · failures · prod+X1000 | [`docs/REPORT.md`](docs/REPORT.md) |
 | Stack justification | this README + [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#stack-rationale) |
 
@@ -256,10 +262,12 @@ Each vacancy yields an `ApplyResult` with `status ∈ {SUCCESS, FAILED, CAPTCHA_
 **Locked decisions:**
 - **Submit mode** — `SUBMIT_MODE` defaults to `dry-run` (fill+solve, stop before POST). The **committed 5-attempt evidence is generated on Lever's `leverdemo` sandbox** (proves the pipeline without polluting real ATS); `real` (into the 5 live postings) requires the explicit flag, so a stray run can't fire a live application.
 - **Scope** — clean modular single-process MVP CLI for the 5 applies; X1000-scale is the report's roadmap, not built.
-- **Captcha/proxy** — real CapSolver key wired (a fired challenge is solved for real); run from a clean local IP, no proxies for the 5-apply test.
-- **Profile data** — used as-is, with the placeholder email swapped for a real mailbox we control, so Lever's post-submit confirmation email is captured as evidence. (Lever has **no blocking verify step** — success is the `/thanks` redirect; the mailbox poll is best-effort.)
+- **Captcha/proxy** — the design leans on the **in-browser silent pass**; the CapSolver→2Captcha fallback is wired but **empirically unreliable** for Lever's invisible Enterprise hCaptcha (tested with live keys: CapSolver dropped hCaptcha — "service not supported"; 2Captcha proxyless + no-`rqdata` times out — §4), and a non-solvable challenge is recorded `captcha_blocked`. Run from a clean local IP, no proxies for the 5-apply test.
+- **Profile data** — used **as-is**, including the provided email (Lever has **no blocking verify step** — success is the `/thanks` redirect). The confirmation-email poll is **optional**: only if you set `JOOBLE_IMAP_*` does the bot additionally capture Lever's post-submit confirmation email as best-effort evidence.
 
-**Build-time unknowns to verify:** whether Lever enforces Enterprise hCaptcha `rqdata`; the real interactive-challenge rate; whether the authenticated POST re-fingerprints harder than the GET; whether a Lever applicant email-verification step fires.
+**Verified:** the full **dry-run runs end-to-end** on the real `leverdemo` `/apply` page (résumé upload → human-filled fields → cards answered → `DRY_RUN_READY` + screenshot), `navigator.webdriver=false`, reproducibly in headless Docker. The third-party solvers were tested with live keys and found unreliable for Lever (above). The full 5-vacancy submit run + per-vacancy screenshots + the REPORT §0 table is the remaining operator step.
+
+**Remaining unknowns to verify (only reachable on a real submit run):** whether Lever enforces Enterprise hCaptcha `rqdata`; the real interactive-challenge rate (and thus the silent-pass KPI); whether the authenticated POST re-fingerprints harder than the GET; whether a Lever applicant email-verification step fires.
 
 ## Ethics & legal note
 

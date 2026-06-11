@@ -1,6 +1,6 @@
 # ApplyMe — Lever Auto-Apply: Report
 
-> **DRAFT** — the required short report. Sections 1, 2, 3, 5 are written from verified research; section 4 (results) and the per-vacancy table are filled after the run. Deeper detail: [`ARCHITECTURE.md`](ARCHITECTURE.md).
+> **DRAFT** — the required short report. Sections 1, 2, 3, 4, 5 are written from verified research and live testing; the §0 result summary and the per-vacancy table are filled after the full 5-apply submit run. Deeper detail: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
 ## 0. Result summary _(filled after the run)_
 
@@ -12,7 +12,7 @@
 | 4 | skillerszone | _TBD_ | _TBD_ | | | |
 | 5 | theathletic | _TBD_ | _TBD_ | | | |
 
-Statuses: `SUCCESS` (reached `/thanks`) · `FAILED:<reason>` · `CAPTCHA_BLOCKED`. Each row carries the brief-literal `result_string` (`success` / `failed:<reason>` / `captcha blocked`). **Committed evidence is generated on the `leverdemo` sandbox; real-posting runs are opt-in.**
+Statuses: `SUCCESS` (reached `/thanks`) · `FAILED:<reason>` · `CAPTCHA_BLOCKED`. Each row carries the brief-literal `result_string` (`success` / `failed:<reason>` / `captcha blocked`). Per-attempt evidence is a full-page screenshot (`output/<company>/<posting_id>/<label>.png`, labels `dry-run`/`unmapped`/`final`) and the matching redacted HTML snapshot (`<label>.html`), plus one `ApplyResult` per vacancy in `output/results.json` (written incrementally). **Committed evidence is generated on the `leverdemo` sandbox; real-posting runs are opt-in.**
 
 ### Task coverage (where each requirement is answered)
 
@@ -73,7 +73,7 @@ A paid solver (**CapSolver** primary, **2Captcha** fallback, behind one `solve({
 
 ## 3. What requests the frontend makes (form fill + submit)
 
-Verified by direct inspection of the live page JS, and **captured live as a `network.har` during each run** (so the figures below are observed, not just described):
+Verified by direct inspection of the live page JS and confirmed against the real `leverdemo` `/apply` page during the dry-run (résumé upload fires `parseResume`; the rest is read off the live DOM):
 
 - **`GET /<company>/<postingId>/apply`** — loads the form. Cloudflare sets `__cf_bm`. The page loads `js.hcaptcha.com/1/secure-api.js` and renders an invisible hCaptcha.
 - **`POST /parseResume`** (multipart: `resume` + `accountId`) — fired on resume upload; returns profile JSON (`{name,email,phone,position,location,links,resumeStorageId,…}`) used to autofill fields and stamp `resumeStorageId`. The resume file is **still re-sent** in the final submit.
