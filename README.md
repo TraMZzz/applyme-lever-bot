@@ -25,20 +25,22 @@ Inputs (candidate profile JSON, resume PDF, target URLs) are supplied **locally*
 
 ## Approach at a glance
 
-Drive the **real `/apply` form** through a **stealth, direct-CDP browser** that lets Lever's _invisible_ hCaptcha self-solve for clean sessions, falling back to a paid solver only when an interactive challenge actually fires. This single decision fixes the four things that defeat a raw-HTTP approach at once: the Cloudflare TLS/JA4 fingerprint, the `__cf_bm` session cookie, the in-browser behavioral signals hCaptcha scores, and the JS-rendered per-posting custom questions.
+Drive the **real `/apply` form** through a **stealth Playwright (patchright) browser** that lets Lever's _invisible_ hCaptcha self-solve for clean sessions, falling back to a paid solver only when an interactive challenge actually fires. This single decision fixes the four things that defeat a raw-HTTP approach at once: the Cloudflare TLS/JA4 fingerprint, the `__cf_bm` session cookie, the in-browser behavioral signals hCaptcha scores, and the JS-rendered per-posting custom questions.
 
 | Layer | Choice | One-line why |
 |---|---|---|
-| Language | **Python** | best-in-class tools (`zendriver`) are Python-first; Node's stealth ecosystem is decayed |
-| Browser engine | **zendriver** (direct-CDP `nodriver` fork) | no Playwright/Selenium shim → `navigator.webdriver` genuinely false; top performer in a 2026 Cloudflare benchmark (28 OK/3 gated/0 hard-blocked — page access, not hCaptcha-pass) |
-| Engine licensing | zendriver-only (AGPL-3.0) | **patchright** is the permissive swap path for SaaS, but needs its own CDP-tab adapter — documented, not wired in the MVP |
+| Language | **Python** | best-in-class browser tools are Python-first; Node's stealth ecosystem is decayed |
+| Browser engine | **patchright** (stealth Playwright fork) | `navigator.webdriver` genuinely false **and** it auto-waits through Lever's `parseResume` re-render — which hangs/crashes a raw-CDP driver (see below) |
+| Engine note | zendriver (raw CDP) **rejected after testing** | stealthiest transport, but its `Runtime.evaluate`/`callFunctionOn` **hang (headless) or crash the renderer (headful)** on Lever's reactive re-render, and a hung-call cancellation corrupts the connection — unrecoverable. Documented in [`REPORT`](docs/REPORT.md) §4. |
 | Captcha | **in-browser silent pass first**, solver fallback | clean session self-solves invisible hCaptcha for free; solver is insurance |
-| Solver | **CapSolver** → **2Captcha** | AI/token (fast, cheap, `isInvisible`+`rqdata`) with a hybrid fallback, behind one interface |
-| Human behavior | **log-normal delays** + **own stdlib Bézier mouse** | non-fixed timing + curved/overshoot/in-element-random clicks (ghost-cursor is dead/no-CDP; zendriver's `mouse_move` is straight-line, so this is our code) |
+| Solver | **CapSolver** → **2Captcha** | AI/token with a hybrid fallback, behind one interface (both empirically unreliable for Lever Enterprise hCaptcha — §4) |
+| Human behavior | **log-normal delays** + **own stdlib Bézier mouse** | non-fixed timing + curved/in-element-random clicks, dispatched via Playwright's `page.mouse`; per-character typing |
 | Proxies | clean local IP (test) · residential pool (scale) | highest trust for 5 applies; datacenter IPs get challenged |
 | Models / output | **Pydantic** + `results.json` + screenshots | lean for a "script"; DB/queue are scale concerns, not built |
 
 Full justification incl. **why each alternative was rejected**: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#stack-rationale).
+
+> **Verified:** the full dry-run runs end-to-end on the real `leverdemo` apply page (résumé upload → human-filled fields → cards answered → `DRY_RUN_READY` + screenshot), `navigator.webdriver=false`. Reproducible headless via [Docker](#docker-reproducible-browser-run).
 
 **Why build it, not adopt a tool (verified June 2026):** there is no sanctioned applicant API (Lever/Greenhouse/Workday submit endpoints are *employer*-credentialed) and no off-the-shelf bot that does unattended Lever submit — the auto-appliers are LinkedIn-focused SaaS, the most-starred OSS (AIHawk) is archived/LinkedIn-only, and the LLM browser-agents (browser-use, Stagehand, Skyvern) gate stealth+CAPTCHA behind a paid cloud and don't defeat invisible Enterprise hCaptcha. Driving the form is the only route, and the products that *do* submit "handle" the captcha by surfacing it to a human or skipping. Build-vs-adopt analysis: [`docs/REPORT.md`](docs/REPORT.md) §1b.
 
@@ -100,13 +102,13 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 │   ├── config.py                # settings (pydantic-settings), submit-mode flag
 │   ├── models.py                # CandidateProfile, Vacancy, ApplyResult (pydantic)
 │   ├── profile_loader.py        # parse profile.json + fetch/locate resume PDF
+│   ├── app_pw.py                # single-vacancy flow: warm → /apply → parse → fill → dry-run / submit
 │   ├── browser/
-│   │   ├── engine.py            # zendriver launch, fingerprint, stealth
-│   │   ├── human.py             # log-normal delays, stdlib-Bézier CDP mouse
-│   │   └── warmup.py            # session warming
+│   │   ├── pw_engine.py         # patchright launch (system Chrome via executable_path), webdriver-leak guard
+│   │   └── human.py             # log-normal delays, stdlib-Bézier mouse (via page.mouse)
 │   ├── lever/
 │   │   ├── form.py              # parse apply form + cards/baseTemplate JSON
-│   │   ├── fill.py              # fill standard fields + card answers
+│   │   ├── pw_fill.py           # fill standard fields + card answers (auto-waiting page.check/select_option/fill)
 │   │   ├── locations.py         # selectedLocation handling
 │   │   ├── submit.py            # submit + outcome detection (/thanks vs 400)
 │   │   └── verify.py            # best-effort: capture Lever confirmation email (evidence, not a gate)
@@ -158,8 +160,7 @@ uv run python scripts/prepare_inputs.py
 ```bash
 # Python 3.12+. uv recommended, but NOT required for the grader:
 uv sync                       # OR:  pip install -e .
-uv run applyme run --help     # zendriver uses your system Chrome (no download)
-# (patchright is an optional future engine-swap — not needed to run)
+uv run applyme run --help     # patchright drives your system Chrome (no separate browser download)
 
 cp .env.example .env          # add CAPSOLVER_API_KEY + mailbox creds (optional for a silent-pass run)
 
@@ -171,7 +172,7 @@ uv run python scripts/check_chrome.py
 
 > **No local Chrome / headless box / CI?** Use [Docker](#docker-reproducible-browser-run) — one command builds a Chromium image and runs the same check.
 
-Key dependencies _(versions verified 2026-06)_ — **core:** `zendriver>=0.15.3`, `httpx>=0.28` (CapSolver REST), `pydantic[email]>=2.12` (`EmailStr` needs `email-validator`) + `pydantic-settings`, `selectolax` (safe HTML parsing); **quality:** `tenacity` (retries), `structlog` (tracing); **optional features:** `patchright>=1.60` (engine-swap path, not wired), `2captcha-python` (fallback solver), `imap-tools` (confirmation-email evidence). Human mouse/delays use **stdlib `random`/`math`** (no `numpy`). **Dev:** `ruff` (with `ASYNC` rules), `basedpyright` (strict on our code), `pytest` + `pytest-asyncio`.
+Key dependencies _(versions verified 2026-06)_ — **core:** `patchright>=1.60.1` (stealth Playwright fork — the browser engine; drives system Chrome via `executable_path`), `httpx>=0.28` (CapSolver REST), `pydantic[email]>=2.12` (`EmailStr` needs `email-validator`) + `pydantic-settings`, `selectolax` (safe HTML parsing); **quality:** `tenacity` (retries), `structlog` (tracing); **optional features:** `2captcha-python` (fallback solver), `imap-tools` (confirmation-email evidence). Human mouse/delays use **stdlib `random`/`math`** (no `numpy`). **Dev:** `ruff` (with `ASYNC` rules), `basedpyright` (strict on our code), `pytest` + `pytest-asyncio`.
 
 ## Usage
 
@@ -222,24 +223,11 @@ The container sets `JOOBLE_HEADFUL=false` and `JOOBLE_CHROME_NO_SANDBOX=true` (b
 
 ## Troubleshooting
 
-**`Failed to connect to browser` at launch** (the log line `zendriver_launch_failed`; its *"running as root → no_sandbox=True"* hint is misleading on macOS — you are not root). The launcher started Chrome but couldn't reach its CDP endpoint in time. In order of likelihood:
+**Browser won't launch.** patchright drives your system Chrome/Chromium via `executable_path` (no separate download). In order of likelihood:
 
-1. **Chrome was already running** — a live instance holds the profile so zendriver's process can't expose the debug port. Quit Chrome fully (`⌘Q`, or `pkill -i "Google Chrome"`) and re-run.
-2. **A very recent Chrome cold-starts slower than zendriver's default ~2.75s connect window** (`browser_connection_timeout 0.25s × 10 tries`). This bot already widens it to ~30s (`browser_connection_timeout=1.0`, `browser_connection_max_tries=30` in `browser/engine.py`), which fixes it for current Chrome (verified on **Chrome 149**, headful, macOS). See zendriver [#104](https://github.com/cdpdriver/zendriver/issues/104) / [#142](https://github.com/cdpdriver/zendriver/issues/142), nodriver [#2032](https://github.com/ultrafunkamsterdam/undetected-chromedriver/issues/2032).
-3. **Still failing? Check whether Chrome can expose CDP at all:**
-   ```bash
-   pkill -i "Google Chrome"; sleep 2
-   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
-     --remote-debugging-port=9222 --user-data-dir=/tmp/zdtest --no-first-run --no-default-browser-check &
-   sleep 4; curl -s http://localhost:9222/json/version
-   ```
-   - **Returns JSON** → CDP works; it's a launch/timeout issue (step 1–2).
-   - **Nothing / refused** → your Chrome is newer than zendriver 0.15.3 supports (validated to Chrome 146). Pin a supported build instead of touching your real Chrome:
-     ```bash
-     npx -y @puppeteer/browsers install chrome@146
-     JOOBLE_CHROME_PATH="<path it prints>" uv run python scripts/check_chrome.py
-     ```
-     …or just use the [Docker path](#docker-reproducible-browser-run) (bundled Chromium, no host Chrome needed).
+1. **No display / running in a container or CI** — keep it headless with `JOOBLE_HEADFUL=false`, and in a container also set `JOOBLE_CHROME_NO_SANDBOX=true` (Chrome refuses to start as root with the sandbox on).
+2. **Chrome isn't auto-found** — set `JOOBLE_CHROME_PATH` to the binary (e.g. `/Applications/Google Chrome.app/Contents/MacOS/Google Chrome`).
+3. **No local Chrome at all** — use the [Docker path](#docker-reproducible-browser-run): it bundles Chromium, so no host browser is needed.
 
 **Smoke-test the browser end-to-end** (no `data/` or keys needed): `uv run python scripts/check_chrome.py` — prints `OK | … navigator.webdriver=false | sitekey=… | cards=N` when the engine drives Chrome correctly.
 

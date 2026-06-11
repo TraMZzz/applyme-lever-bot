@@ -42,8 +42,8 @@ load CandidateProfile + first MAX_APPLIES Vacancies
 for each vacancy (sequential, log-normal inter-apply delay):
    fresh browser context ; warmup(session)         # homepage → dwell/scroll → posting (Cloudflare __cf_bm)
    open /apply ; FormSpec = parse(form + ALL cards JSON + rqdata?)
-   upload resume → AWAIT /parseResume + settle → override standard fields → verify each .value
-       fill cards (answers = rules.map(profile,cards) (+ llm fallback)) ; pre-submit completeness gate
+   upload resume (set_input_files) → Playwright auto-waits through /parseResume re-render → override standard fields
+       fill cards (answers = rules.map(profile,cards) (+ llm fallback))
    trigger invisible hCaptcha: silent-pass → proceed
         challenge renders → solve (≤90s, CapSolver→2Captcha) → inject h-captcha-response → proceed
    SUBMIT_MODE: dry-run → stop (DRY_RUN_READY) | sandbox → leverdemo | real → POST
@@ -65,11 +65,11 @@ The only per-posting variation is the cards JSON + which fields are `required`; 
 | `errors` | exception hierarchy (`RetryableError` vs `PermanentError`) for the retry filter | — |
 | `models` | `CandidateProfile`, `WorkExperience`, `Vacancy`, `Card`/`CardField`, `FieldRef`, `FormSpec`, `ApplyResult` | pydantic |
 | `profile_loader` | `data/profile.json` + resume PDF → `CandidateProfile` (egress-guarded) | models |
-| `browser/engine` | zendriver launch (real Chrome, headful), stealth, `webdriver` guard (zendriver-only; patchright not wired) | zendriver |
-| `browser/human` | Bézier mouse via raw CDP; log-normal delays; typing cadence | stdlib `random`/`math` |
-| `browser/warmup` | Warm the Cloudflare session before `/apply` | engine, human |
+| `browser/pw_engine` | patchright (stealth Playwright) launch of the system Chrome (real, headful), `webdriver` guard (`assert_no_webdriver_leak`) | patchright |
+| `browser/human` | Bézier mouse (dispatched via Playwright `page.mouse`); log-normal delays; typing cadence | stdlib `random`/`math` |
+| `app_pw` | Single-vacancy flow: warm Cloudflare → `/apply` → parse → `resolve_answers` → `pw_fill` → dry-run evidence OR submit+captcha+confirmation | pw_engine, pw_fill |
 | `lever/form` | Parse standard fields + ALL `cards[…][baseTemplate]` + capture `rqdata` → `FormSpec` | selectolax |
-| `lever/fill` | Resume upload → **parseResume barrier** → override + verify → fill cards → completeness gate | human, answers |
+| `lever/pw_fill` | Resume `set_input_files` → human-override standard fields → answer cards, all via Playwright auto-waiting primitives | human, answers |
 | `lever/locations` | Set `selectedLocation` JSON directly (skip gated autocomplete) | engine |
 | `lever/submit` | Trigger hCaptcha, single-flight submit, classify (`/thanks` vs 400), honor `SUBMIT_MODE` | captcha |
 | `lever/verify` | Best-effort: poll mailbox for Lever confirmation (host-checked link); NOT a gate | imap-tools |
@@ -78,7 +78,7 @@ The only per-posting variation is the cards JSON + which fields are `required`; 
 | `captcha/twocaptcha` | 2Captcha fallback (`AsyncTwoCaptcha`) | 2captcha-python |
 | `answers/rules` | Deterministic profile → card-answer mapping (option text) | models |
 | `answers/llm` | Optional LLM fallback for unmapped required questions, output ∈ options | anthropic |
-| `evidence` | Redacted HTML snapshot + screenshots + HAR + telemetry per attempt | engine |
+| `evidence` | Redacted HTML snapshot + screenshots per attempt (`redact_html`) | pw_engine |
 | `runner` | Orchestrate vacancies, inter-apply pacing, owns the shared `httpx.AsyncClient`, writes results | all above |
 
 ---
@@ -149,13 +149,13 @@ class ApplyResult(BaseModel):
 
 ### 5.1 Browser & stealth (`browser/`)
 - **Pre-flight (config import / engine):** locate Chrome (platform paths + `CHROME_PATH` override), assert it exists, `--version` within a supported major range; on failure emit an actionable error and **exit non-zero before touching any vacancy**. Document the version contract.
-- **`engine.py`** — `zendriver>=0.15.3`, real system Chrome, **headful**, `zd.Config(headless=False, browser_executable_path=…, disable_webrtc=True)` (NB: `Config(lang=…)` is omitted — zendriver rejects the resulting `--lang` arg at `start()`; language follows the system Chrome locale; Chrome's own sandbox is disabled only when running as root/CI); WebGL left real; **`browser_args` minimal, UA not spoofed** (the genuine fingerprint is the stealth — `navigator.webdriver` is genuinely false). **Startup guard:** `evaluate("navigator.webdriver")` must be falsy → else abort `WEBDRIVER_LEAK` (do **not** spoof, do **not** add `--disable-blink-features=AutomationControlled` — real Chrome lacks it; adding it is itself a tell). zendriver's default `--disable-infobars` already suppresses the automation infobar. **`evaluate()` boundary:** JS-set only genuinely hidden inputs (`accountId`, `resumeStorageId`, `selectedLocation`, `h-captcha-response`); visible fields are click+type. **patchright** is a documented permissive engine-swap path (for AGPL/SaaS) but is **NOT wired in the MVP** — a Playwright page can't satisfy the CDP tab interface the flow drives, so a real swap needs its own tab adapter. A zendriver launch failure instead raises a clear error that the runner records as a classified `RETRYABLE_ERROR` (no silent dead path).
-- **`human.py`** *(our code — engine `mouse_move` is straight-line; `python-ghost-cursor` is dead)* — Bézier path (stdlib `math`; smoothstep + perpendicular bow) dispatched per-waypoint via `cdp.input_.dispatch_mouse_event("mouseMoved", …)`, tracking cursor `(x,y)` ourselves, overshoot+correct on long moves, sub-pixel jitter + log-normal button-hold on click. **Log-normal per-action delays** (`random.lognormvariate(log(median), σ)`, classes keystroke/field-think/read/pre-submit, clamped), **real `asyncio.sleep`**. Char-by-char typing + rare typo+backspace on textareas. **Seed `random.Random(seed)` per run; log the seed.**
-- **`warmup.py`** — never hit `/apply` cold: land on `jobs.lever.co/<company>`, run JS, **event-driven scroll** + dwell, then open the posting → Apply. One cookie jar + same fingerprint through the flow; finish before the ~30-min `__cf_bm` idle expiry; wait on `expect_request`/`expect_response`, not sleeps.
+- **`pw_engine.py`** — `patchright>=1.60.1` (a stealth Playwright fork with anti-detection patches), driving the **real system Chrome** via `executable_path` (no separate browser download), **headful** by default; UA **not spoofed** (the genuine fingerprint is the stealth — `navigator.webdriver` is genuinely false), Chrome's own sandbox disabled only when running as root/CI (`JOOBLE_CHROME_NO_SANDBOX`). **Startup guard:** `assert_no_webdriver_leak` — `page.evaluate("navigator.webdriver")` must be falsy → else abort `WEBDRIVER_LEAK` (do **not** spoof). **Why patchright rather than raw CDP (the parseResume problem):** uploading the résumé triggers Lever's client-side `parseResume` **re-render that destroys the JS execution context**. Patchright tracks the execution-context lifecycle and **auto-waits through the navigation/re-render**, so `fill()`/`check()`/`select_option()` succeed; a raw-CDP driver's `Runtime.evaluate`/`callFunctionOn` instead **hang or crash the renderer** there (see *Engine — why patchright*). The hidden inputs (`selectedLocation`, `h-captcha-response`) are still set via `eval_on_selector`/`evaluate`; visible fields are click+type.
+- **`human.py`** *(our code — `python-ghost-cursor` is dead; raw `mouse_move` is straight-line)* — Bézier path (stdlib `math`; smoothstep + perpendicular bow) dispatched per-waypoint via **Playwright `page.mouse.move`**, tracking cursor `(x,y)` ourselves, sub-pixel in-element jitter (`jittered_point`) on click. **Log-normal per-action delays** (`random.lognormvariate(log(median), σ)`, classes keystroke/field-think/read/pre-submit, clamped), **real `asyncio.sleep`**. Char-by-char typing. **Seed `random.Random(seed)` per run; log the seed.**
+- **Warm-up (`app_pw._warm`)** — never hit `/apply` cold: land on `jobs.lever.co/<company>`, dwell, then open the posting before `/apply`. One context + same fingerprint through the flow; finishes before the ~30-min `__cf_bm` idle expiry.
 
 ### 5.2 Lever interaction (`lever/`)
 - **`form.py`** — parse via `selectolax`; read hidden values (`accountId`, `posting_id`, sitekey); decode **every** `cards[<id>][baseTemplate]` (+ EEO `surveysResponses`) JSON → `Card`/`CardField`; **capture `rqdata`** (§5.3). Returns `FormSpec`.
-- **`fill.py`** — **parseResume barrier (not code-order):** `send_file` the resume → **await the `/parseResume` response** (`expect_response(r".*/parseResume.*")` under `asyncio.timeout`) → **settle-poll** until autofilled inputs stop changing → then override standard fields → **re-read each `.value` and assert it equals the canonical profile value** (write-verify-rewrite); persistent mismatch → `FAILED:AUTOFILL_CONFLICT` (do not submit). `/parseResume` timeout → proceed with manual fill + flag (`resumeStorageId` may stay empty). Then fill cards (radio/checkbox → Bézier-click the option whose **text** matches; `<select>` → by visible text; text/textarea → human-typed). **Fail-closed schema coverage:** unknown field-type → `FAILED:UNSUPPORTED_FIELD_TYPE:<t>`; required+unmapped+no-LLM → `FAILED:FORM_SCHEMA_UNMAPPED:<f>`. **Pre-submit completeness gate:** assert every required `FormSpec` field has a non-empty value before Submit.
+- **`pw_fill.py`** — **résumé first, then override (Playwright auto-wait, not a settle-poll):** `set_input_files('[name="resume"]', …)` → let Lever's `parseResume` re-render run → override standard fields with `_human_fill` (Bézier-move to the field, jittered click, `fill("")` to clear any autofill, then per-character `keyboard.type`). Playwright's `fill()`/`locator.wait_for` **auto-wait through the re-render** that destroys the JS context, so no manual barrier/`evaluate`-settle is needed (raw CDP hangs there — see §5.1 / *Engine — why patchright*). Then answer cards: `multiple-choice`/`multiple-select` → `page.check(value=…)`; `dropdown` → `select_option(label=…)`; text/textarea → `fill(…)` — all auto-waiting, bounded by per-call timeouts. The hidden `selectedLocation` blob is set via `eval_on_selector`.
 - **`locations.py`** — set `location` text + hidden `selectedLocation` = `JSON.stringify(locationObject)`. The **exact schema is captured from a real `/searchLocations` response on leverdemo** and the injected blob validated against it pre-submit. Blank for single-location postings; if a 400 flags `location`, the fallback mints a **separate** hCaptcha token for `/searchLocations` (independent of the submit token) rather than deadlocking on the silent-pass path.
 - **`submit.py`** — **silent-pass first**: click Submit (human), let invisible hCaptcha run, detect a challenge iframe; if it renders → solve → inject `h-captcha-response` → resubmit. **Single-flight guard** so our resubmit and Lever's own `hcaptchaTokenExpired` re-click can't both POST. Submit wrapped in `expect_response(r".*/apply.*")` under `asyncio.timeout`. **Classify:** `/thanks` → `SUCCESS`; 400 re-render with `p.error-message` → re-scrape `#application-form`: flagged required fields → `FAILED:MISSING_REQUIRED_FIELD:<f>`; none flagged + captcha unverified → `CAPTCHA_BLOCKED`. `SUBMIT_MODE` gates the terminal step.
 - **`verify.py`** — best-effort: after `SUCCESS`, poll the mailbox (`imap-tools` in `asyncio.to_thread`, bounded ~120s/5s, `seen=False`, no mark-seen) for a `@hire.lever.co` message; **before visiting any link, assert host `== lever.co` / `*.lever.co`, https, no userinfo**; store `confirmation_email_url`. "No email" is expected — never fails the apply.
@@ -212,21 +212,20 @@ Detection: `SUCCESS` = redirect to `…/thanks` (or 200 body with thanks markup)
 ### Why browser automation, not raw requests
 The submit POST is double-gated: Cloudflare fingerprints TLS/JA4 + HTTP/2 *before JS runs*, and Lever's invisible/passive hCaptcha scores a *live browser environment* a headless HTTP client can't emit. A real browser fixes both + the `__cf_bm` cookie + the JS cards.
 
-### Engine — why zendriver
-Direct-CDP, no Playwright/Selenium shim → no `webdriver`/`Runtime.enable` leak; **the best performer in an independent 2026 headed/residential-IP benchmark — 28 OK / 3 gated / 0 hard-blocked across 31 Cloudflare targets** (note: that measures page *access*, not invisible-hCaptcha pass rate, which we measure ourselves on leverdemo). Rejected: undetected-chromedriver (unmaintained), playwright-stealth (loses to Cloudflare's protocol layer), Camoufox (no CDP, heavier), rebrowser/selenium-driverless (≈ vanilla). **patchright** is the permissive fallback (zendriver is AGPL-3.0).
+### Engine — why patchright
+**zendriver (raw CDP) was implemented first and rejected after testing.** It is the stealthiest *transport* (direct CDP, no Playwright/Selenium shim → no `webdriver`/`Runtime.enable` leak), but it cannot drive Lever's apply form: uploading the résumé triggers a client-side `parseResume` **re-render that destroys the JS execution context**, after which the raw-CDP `Runtime` calls (`Runtime.evaluate`, `Element.apply`→`callFunctionOn`) **hang (headless) or crash the renderer (headful — "Aw, Snap!" `STATUS_ACCESS_VIOLATION`)**. Worse, cancelling a hung CDP call corrupts the connection, so bounding/retry can't recover (proven: a 45s `asyncio.timeout` did **not** fire). This is the classic Puppeteer/Playwright *"Execution context was destroyed, most likely because of a navigation"* — but **patchright (a stealth Playwright fork) auto-waits through the re-render and throws-not-hangs**, so its `fill()`/`check()`/`select_option()` succeed where raw CDP cannot. Patchright also keeps `navigator.webdriver` genuinely false. Verified: the full dry-run runs end-to-end on the real leverdemo `/apply` page (résumé upload → human-filled standard fields → cards answered → `DRY_RUN_READY` + screenshot), reproducible headless in Docker. Other engines rejected earlier: undetected-chromedriver (unmaintained), playwright-stealth (loses to Cloudflare's protocol layer), Camoufox (heavier), rebrowser/selenium-driverless (≈ vanilla).
 
 ### Dependencies (verified PyPI, 2026-06)
 
 | Tier | Package | Floor | Role |
 |---|---|---|---|
-| core | `zendriver` | `>=0.15.3` | browser engine |
+| core | `patchright` | `>=1.60.1` | browser engine (stealth Playwright fork; auto-waits through Lever's parseResume re-render) |
 | core | `httpx` | `>=0.28` | async CapSolver REST + resume fetch |
 | core | `pydantic[email]` | `>=2.12` | models + `EmailStr` (needs `email-validator`) |
 | core | `pydantic-settings` | `>=2.14` | typed config from `.env` |
 | core | `selectolax` | latest | fast, safe HTML parsing (form + 400 re-render + fixtures) |
 | quality | `tenacity` | `>=9.1` | bounded/jittered/filtered async retries |
 | quality | `structlog` | `>=26.1` | per-apply contextvars tracing |
-| feature | `patchright` | `>=1.60` | permissive engine-swap path (documented; not wired — needs a CDP-tab adapter) |
 | feature | `2captcha-python` | `>=2.0.7` | fallback solver (`from twocaptcha import AsyncTwoCaptcha`) |
 | feature | `imap-tools` | `>=1.13` | confirmation-email evidence |
 | feature | `anthropic` | latest | optional LLM card-answer fallback |
@@ -251,8 +250,9 @@ Direct-CDP, no Playwright/Selenium shim → no `webdriver`/`Runtime.enable` leak
 ```text
 src/applyme/
 ├── __main__.py · cli.py · config.py · errors.py · models.py · profile_loader.py
-├── browser/ engine.py · human.py · warmup.py
-├── lever/   form.py · fill.py · locations.py · submit.py · verify.py
+├── app.py (resolve_answers + run_command) · app_pw.py (single-vacancy patchright flow)
+├── browser/ pw_engine.py · human.py
+├── lever/   form.py · pw_fill.py · locations.py · submit.py · verify.py
 ├── captcha/ base.py · capsolver.py · twocaptcha.py
 ├── answers/ rules.py · llm.py
 ├── evidence.py · runner.py
