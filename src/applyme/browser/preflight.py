@@ -36,9 +36,15 @@ class IpVerdict:
 def evaluate_ip(info: dict[str, object]) -> tuple[bool, str]:
     """Pure decision over an IPQualityScore /ip response — pass/fail + a human reason.
 
-    Separated from the HTTP call so the gate logic is unit-tested without a network round-trip.
+    Separated from the HTTP call so the gate logic is unit-tested without a network round-trip. An
+    *unscoreable* response (IPQS ``success:false`` — bad key/plan/params — or no ``fraud_score``) is
+    treated as **advisory** (``ok=True``, proceed) and surfaces IPQS's own message, rather than being
+    mistaken for a genuinely dirty IP. Only a real high score / proxy flag / datacenter ASN fails the gate.
     """
-    raw = info.get("fraud_score", 100)  # NB: 0 is a valid (clean) score — don't `or`-default it
+    if info.get("success") is False or "fraud_score" not in info:
+        msg = info.get("message") or "no fraud_score in response"
+        return True, f"unscored — IPQS: {msg} (check the key/plan; proceeding without the IP gate)"
+    raw = info["fraud_score"]  # NB: 0 is a valid (clean) score — don't `or`-default it
     score = int(raw) if isinstance(raw, int | float) else 100
     flags = [k for k in ("proxy", "vpn", "tor", "recent_abuse", "bot_status") if info.get(k)]
     conn = str(info.get("connection_type", "") or "")

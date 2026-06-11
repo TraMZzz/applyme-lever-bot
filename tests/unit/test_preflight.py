@@ -26,7 +26,13 @@ def test_datacenter_connection_fails():
     assert not ok and "connection_type" in reason
 
 
-def test_missing_fields_default_to_fail_closed():
-    # An empty/garbage response must not pass (fraud_score defaults to 100).
-    ok, _ = evaluate_ip({})
-    assert not ok
+def test_ipqs_error_is_advisory_not_a_dirty_ip():
+    # IPQS signals a bad key/plan with success:false + a message — surface it and PROCEED (don't mistake
+    # an API error for a score-100 IP). This was the live bug: an unscored IP read as "fraud_score=100".
+    ok, reason = evaluate_ip({"success": False, "message": "Invalid or expired API key."})
+    assert ok and "Invalid or expired API key" in reason
+
+
+def test_no_fraud_score_is_advisory():
+    ok, reason = evaluate_ip({})  # empty/garbage ⇒ unscoreable ⇒ advisory, not a hard block
+    assert ok and "unscored" in reason
