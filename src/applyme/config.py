@@ -35,6 +35,27 @@ class Settings(BaseSettings):
     max_applies: int = 5
     chrome_path: str | None = None
     chrome_no_sandbox: bool = False  # disable Chrome's sandbox (root/containers/CI); auto-falls-back on connect failure
+    # Stealth / silent-pass tuning (see docs/REPORT.md §4 — the unattended captcha path)
+    user_data_dir: str | None = None  # persistent Chrome profile (carries __cf_bm/cf_clearance across the 5 applies)
+    browser_locale: str = "en-US"  # coherence-pinned; do NOT hand-set a UA/Accept-Language (desyncs client-hints)
+    browser_timezone: str | None = None  # set to match the egress-IP geo (e.g. "America/New_York") when it drifts
+    ipqs_api_key: SecretStr | None = None  # optional: IPQualityScore key for the egress-IP reputation pre-flight
+    proxy_server: str | None = (
+        None  # optional sticky residential/mobile exit, e.g. "http://host:port" (solve-IP==submit-IP)
+    )
+    proxy_username: str | None = None
+    proxy_password: SecretStr | None = None
+
+    def proxy_config(self) -> dict[str, str] | None:
+        """Playwright proxy dict for the persistent context, or None for a direct (home-IP) connection."""
+        if not self.proxy_server:
+            return None
+        cfg: dict[str, str] = {"server": self.proxy_server}
+        if self.proxy_username:
+            cfg["username"] = self.proxy_username
+        if self.proxy_password:
+            cfg["password"] = self.proxy_password.get_secret_value()
+        return cfg
 
 
 def find_chrome(override: str | None = None) -> str:

@@ -103,6 +103,9 @@ class ApplyResult(BaseModel):
     flagged_fields: list[str] = Field(default_factory=list)
     solver_used: Literal["none", "capsolver", "twocaptcha"] = "none"
     solve_ms: int | None = None
+    silent_pass: bool | None = None  # did the invisible hCaptcha self-pass? (the unattended KPI; None until a submit)
+    captcha_outcome: Literal["silent_pass", "challenge_rendered", "blocked"] | None = None
+    ip_fraud_score: int | None = None  # IPQualityScore egress-IP fraud_score at run time (pre-flight), if measured
     rng_seed: int
     cf_ray: str | None = None
     attempts: int = 1

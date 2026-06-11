@@ -16,7 +16,7 @@ from typing import Literal, cast
 
 import structlog
 
-from applyme.browser.human import sample_delay
+from applyme.browser.human import bezier_path, jittered_point, sample_delay
 from applyme.browser.pw_engine import assert_no_webdriver_leak, launch_playwright
 from applyme.config import Settings
 from applyme.evidence import redact_html
@@ -47,13 +47,43 @@ async def _capture(page: object, out_dir: Path, label: str) -> dict[str, str | N
     return paths
 
 
+async def _human_dwell(page: object, rng: random.Random) -> None:
+    """Genuine pre-action telemetry: Bézier cursor drift + scroll so hCaptcha's passive stage (which grades
+    mouse velocity/curvature + scroll + time-on-page BEFORE the token is minted) samples human-shaped motion.
+
+    The current code's biggest behavioural gap was arriving at /apply with near-zero in-page telemetry; this
+    fills the sampling window. Best-effort and bounded — never blocks the flow.
+    """
+    with contextlib.suppress(Exception):
+        dims = cast("list[int]", await page.evaluate("() => [window.innerWidth, window.innerHeight]"))  # type: ignore[attr-defined]
+        w, h = (dims[0] or 1280), (dims[1] or 800)
+        cur = (w * 0.5, h * 0.5)
+        for _ in range(rng.randint(2, 4)):
+            dest = jittered_point(0, 0, w, h, rng)
+            for px, py in bezier_path(cur, dest, rng):
+                await page.mouse.move(px, py)  # type: ignore[attr-defined]
+                await asyncio.sleep(0.006 + rng.random() * 0.012)
+            cur = dest
+            await asyncio.sleep(sample_delay("field_think", rng))
+        await page.mouse.wheel(0, rng.randint(300, 900))  # type: ignore[attr-defined]
+        await asyncio.sleep(sample_delay("read_page", rng))
+        await page.mouse.wheel(0, -rng.randint(100, 300))  # type: ignore[attr-defined]
+
+
 async def _warm(page: object, company: str, apply_url: str, rng: random.Random) -> None:
-    """Light Cloudflare warm-up: company page → dwell → posting, before /apply."""
+    """Cloudflare/hCaptcha warm-up: company page → human dwell → posting → dwell, before /apply.
+
+    Lands on the company page first (never /apply cold) so CF's background JS settles and stamps a clean
+    __cf_bm, and drives real cursor/scroll motion so the session carries organic behavioural telemetry into
+    the passive captcha stage. The persistent profile (pw_engine) keeps these cookies across the 5 applies.
+    """
     with contextlib.suppress(Exception):
         await page.goto(f"https://jobs.lever.co/{company}", wait_until="domcontentloaded", timeout=30000)  # type: ignore[attr-defined]
         await asyncio.sleep(sample_delay("read_page", rng))
+        await _human_dwell(page, rng)
         await page.goto(apply_url.removesuffix("/apply"), wait_until="domcontentloaded", timeout=30000)  # type: ignore[attr-defined]
         await asyncio.sleep(sample_delay("read_page", rng))
+        await _human_dwell(page, rng)
 
 
 async def apply_one_pw(
@@ -73,7 +103,13 @@ async def apply_one_pw(
     ev_dir = out_dir / v.company / v.posting_id
 
     async with launch_playwright(
-        headful=headful, chrome_path=settings.chrome_path, no_sandbox=settings.chrome_no_sandbox
+        headful=headful,
+        chrome_path=settings.chrome_path,
+        no_sandbox=settings.chrome_no_sandbox,
+        user_data_dir=settings.user_data_dir,
+        proxy=settings.proxy_config(),
+        locale=settings.browser_locale,
+        timezone_id=settings.browser_timezone,
     ) as page:
         await _warm(page, v.company, str(v.apply_url), rng)
         await page.goto(str(v.apply_url), wait_until="domcontentloaded", timeout=30000)
@@ -116,8 +152,9 @@ async def apply_one_pw(
                 finished_at=_now(),
             )
 
-        # Submit (sandbox/real): trigger the invisible hCaptcha; solve only if a challenge renders
-        # (silent-pass first), then let Lever's inline script fire the native multipart POST.
+        # Submit (sandbox/real): a pre-execute human pass so the passive captcha stage has live telemetry,
+        # then trigger the invisible hCaptcha (silent-pass first) and let Lever's inline script fire the POST.
+        await _human_dwell(page, rng)
         solver_used = cast(
             "Literal['none', 'capsolver', 'twocaptcha']", await _submit_with_captcha(page, v, spec, settings)
         )
@@ -126,6 +163,9 @@ async def apply_one_pw(
         final_url = page.url
         body = await page.content()
         outcome = classify_outcome(final_url=final_url, http_status=200, body=body)
+        # Measured silent-pass KPI: SUCCESS ⇒ the invisible hCaptcha self-passed; CAPTCHA_BLOCKED ⇒ it didn't.
+        silent_pass = outcome.status == "SUCCESS"
+        captcha_outcome = "silent_pass" if silent_pass else ("blocked" if outcome.status == "CAPTCHA_BLOCKED" else None)
         confirmation_url = await _poll_confirmation(settings)
         ev = await _capture(page, ev_dir, "final")
         return ApplyResult(
@@ -137,6 +177,8 @@ async def apply_one_pw(
             flagged_fields=outcome.flagged_fields,
             final_url=final_url,
             solver_used=solver_used,
+            silent_pass=silent_pass,
+            captcha_outcome=cast("Literal['silent_pass', 'challenge_rendered', 'blocked'] | None", captcha_outcome),
             confirmation_email_url=confirmation_url,
             rng_seed=rng_seed,
             screenshot_paths=[s for s in [ev.get("screenshot")] if s],
