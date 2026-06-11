@@ -122,7 +122,7 @@ async def apply_one_pw(
             "Literal['none', 'capsolver', 'twocaptcha']", await _submit_with_captcha(page, v, spec, settings)
         )
         with contextlib.suppress(Exception):
-            await page.wait_for_load_state("networkidle", timeout=20000)
+            await page.wait_for_load_state("domcontentloaded", timeout=10000)
         final_url = page.url
         body = await page.content()
         outcome = classify_outcome(final_url=final_url, http_status=200, body=body)
@@ -147,28 +147,42 @@ async def apply_one_pw(
 
 
 async def _submit_with_captcha(page: object, v: Vacancy, spec: object, settings: Settings) -> str:
-    """Click submit, wait for a silent-pass token, and only call a solver if a challenge renders."""
+    """Click submit and wait for the outcome.
+
+    Lever's inline script runs `hcaptcha.execute()` then fires the native multipart POST. The
+    reliable signal is the **navigation**: a silent pass lands on `/<co>/<id>/thanks`. We do NOT poll
+    the `h-captcha-response` token (it's gone once the page navigates). A solver is invoked ONLY if an
+    interactive challenge iframe actually renders (and a key is set) — bounded, since the 2026 solver
+    market is unreliable for Lever's invisible Enterprise hCaptcha.
+    """
     with contextlib.suppress(Exception):
         await page.click("button[type=submit]", timeout=15000)  # type: ignore[attr-defined]
-    for _ in range(6):  # settle ~3s for the response field to self-fill (silent pass)
-        with contextlib.suppress(Exception):
-            if await page.eval_on_selector('[name="h-captcha-response"]', "e => e.value"):  # type: ignore[attr-defined]
-                return "none"
-        await asyncio.sleep(0.5)
+    with contextlib.suppress(Exception):
+        await page.wait_for_url("**/thanks", timeout=20000)  # type: ignore[attr-defined]
+    if str(page.url).rstrip("/").endswith("/thanks"):  # type: ignore[attr-defined]
+        return "none"  # silent pass succeeded
+
+    challenge = False
+    with contextlib.suppress(Exception):
+        challenge = await page.locator('iframe[src*="hcaptcha"][title*="challenge"]').count() > 0  # type: ignore[attr-defined]
     ck = settings.capsolver_api_key.get_secret_value() if settings.capsolver_api_key else None
     tk = settings.twocaptcha_api_key.get_secret_value() if settings.twocaptcha_api_key else None
-    if not (ck or tk):
+    if not (challenge and (ck or tk)):
         return "none"
     from applyme.captcha.base import solve_hcaptcha
 
     with contextlib.suppress(Exception):
-        ua = str(await page.evaluate("navigator.userAgent"))  # type: ignore[attr-defined]
-        token, vendor = await solve_hcaptcha(
-            page_url=str(v.apply_url), ua=ua, rqdata=getattr(spec, "rqdata", None), capsolver_key=ck, twocaptcha_key=tk
-        )
-        await page.eval_on_selector('[name="h-captcha-response"]', "(e, v) => { e.value = v; }", token)  # type: ignore[attr-defined]
-        await page.click("button[type=submit]", timeout=15000)  # type: ignore[attr-defined]
-        return vendor
+        async with asyncio.timeout(45):  # solvers are unreliable for Lever Enterprise hCaptcha — attempt, don't stall
+            ua = str(await page.evaluate("navigator.userAgent"))  # type: ignore[attr-defined]
+            token, vendor = await solve_hcaptcha(
+                page_url=str(v.apply_url), ua=ua, rqdata=getattr(spec, "rqdata", None),
+                capsolver_key=ck, twocaptcha_key=tk,
+            )
+            await page.eval_on_selector('[name="h-captcha-response"]', "(e, v) => { e.value = v; }", token)  # type: ignore[attr-defined]
+            with contextlib.suppress(Exception):
+                await page.click("button[type=submit]", timeout=15000)  # type: ignore[attr-defined]
+                await page.wait_for_url("**/thanks", timeout=20000)  # type: ignore[attr-defined]
+            return vendor
     return "none"
 
 
