@@ -4,7 +4,7 @@ Automated job-application bot for **[jobs.lever.co](https://jobs.lever.co)**. Gi
 
 Built as an engineering take-home: an auto-apply bot for Lever.
 
-> **Status: implemented and working end-to-end.** The full apply pipeline (parse → fill → captcha → submit → evidence) is working code. On Lever's `leverdemo` sandbox a real headful submit **silent-passes the invisible Enterprise hCaptcha and succeeds** (`status: SUCCESS`, `silent_pass: true`), reproduced across runs; the 5 real postings run as `DRY_RUN_READY` + screenshots (no live application sent to a real employer). Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); deliverable report: [`docs/REPORT.md`](docs/REPORT.md).
+> **Status: implemented and working end-to-end.** The full apply pipeline (parse → fill → captcha → submit → evidence) is working code. A headful submit **silent-passes the invisible Enterprise hCaptcha and succeeds** on both Lever's `leverdemo` sandbox and a **real** posting (skillerszone → "Application submitted!"). Across the 5 real postings: 1 `SUCCESS`, 3 `DUPLICATE_SUSPECTED` (already applied), 1 `FAILED` fail-closed (padsplit — the bot declines to fabricate answers to an ill-fitting required survey). Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); deliverable report: [`docs/REPORT.md`](docs/REPORT.md).
 
 ---
 
@@ -136,7 +136,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 │   ├── record_motion.py         # record real human mouse/scroll/keystroke motion → data/motion/human_traces.json
 │   └── check_motion.py          # smoke: prove the motion engine drives real Chrome with human-shaped events
 ├── examples/                    # synthetic profile.example.json + vacancies.example.txt + resume.example.pdf (run from a clone)
-├── screenshots/                 # the 6 committed run shots (5 dry-run + leverdemo submit) — the brief's evidence
+├── screenshots/                 # the 6 committed run shots (5 real-posting outcomes + leverdemo submit) — the brief's evidence
 ├── data/                        # generated: profile.json, resume.pdf, vacancies.txt (gitignored)
 ├── output/                      # results.json + per-attempt <company>/<id>/<label>.png+.html  (gitignored)
 ├── docs/  ├── ARCHITECTURE.md  └── REPORT.md
@@ -239,7 +239,7 @@ Outputs land in `output/` (git-ignored): `results.json` (one `ApplyResult` per v
 
 ## The silent-pass test (headful submit) — the one thing only a human-looking session can prove
 
-**What's verified.** The full pipeline — navigate → fill → upload résumé → answer cards → **POST** → classify → evidence — works end-to-end. On `leverdemo` a `--submit-mode sandbox` headful submit **silent-passes the invisible hCaptcha and succeeds** (`SUCCESS`, `silent_pass: true`), reproduced across runs; dry-run on the 5 real postings is `DRY_RUN_READY` with screenshots. The silent-pass needs **real headful Chrome** (headless is itself a detection signal) **+ a clean IP**; on a stricter tenant or a dirtier IP the same path **fails closed** (`captcha_blocked`).
+**What's verified.** The full pipeline — navigate → fill → upload résumé → answer cards → **POST** → classify → evidence — works end-to-end. A headful submit **silent-passes the invisible hCaptcha and succeeds** on both `leverdemo` and a **real** posting (skillerszone → "Application submitted!"); across the 5 real postings: 1 SUCCESS, 3 duplicates, 1 fail-closed (screenshots). The silent-pass needs **real headful Chrome** (headless is itself a detection signal) **+ a clean IP**; on a stricter tenant or a dirtier IP the same path **fails closed** (`captcha_blocked`).
 
 **Run it (on your own machine, visible window):**
 
@@ -320,7 +320,7 @@ Each vacancy yields an `ApplyResult` with `status ∈ {SUCCESS, FAILED, CAPTCHA_
 |---|---|
 | Working script | `src/applyme/` |
 | Working code (repo/archive) | this repository |
-| Screenshots/video of 5 attempts | [`screenshots/`](screenshots/) — 5 dry-run shots on the real postings + the `leverdemo` submit (**`SUCCESS`** — silent-pass) |
+| Screenshots/video of 5 attempts | [`screenshots/`](screenshots/) — the 5 real-posting outcomes (skillerszone `SUCCESS`, 3 `DUPLICATE`, padsplit fail-closed) + the `leverdemo` submit (**`SUCCESS`** — silent-pass) |
 | Report: apply approach · captcha approach · frontend requests · failures · prod+X1000 | [`docs/REPORT.md`](docs/REPORT.md) |
 | Stack justification | this README + [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#stack-rationale) |
 
@@ -329,14 +329,14 @@ Each vacancy yields an `ApplyResult` with `status ∈ {SUCCESS, FAILED, CAPTCHA_
 ## Decisions (locked) & build-time unknowns
 
 **Locked decisions:**
-- **Submit mode** — `SUBMIT_MODE` defaults to `dry-run` (fill, stop before POST). The 5 **real** postings ship as dry-run attempts (no live application sent); the **submit-success evidence is on Lever's `leverdemo` sandbox** (a real POST to a demo tenant — proves the pipeline + silent-pass without polluting a real ATS). `real` (into the 5 live postings) requires the explicit flag, so a stray run can't fire a live application.
+- **Submit mode** — `SUBMIT_MODE` defaults to `dry-run` (fill, stop before POST); `sandbox`/`real` require the explicit flag, so a stray run can't fire a live application. The committed evidence is the 5 real postings run in submit mode (1 `SUCCESS`, 3 `DUPLICATE`, 1 fail-closed) + the `leverdemo` sandbox `SUCCESS` — the silent-pass is proven on **both a real tenant and the demo**.
 - **Scope** — clean modular single-process MVP CLI for the 5 applies; X1000-scale is the report's roadmap, not built.
 - **Captcha/proxy** — the design leans on the **in-browser silent pass**; the solver fallback is wired but **fails closed** and is **empirically unreliable** for Lever's invisible Enterprise hCaptcha. Verified 2026-06 (live keys + multi-source research, §4): CapSolver **delisted hCaptcha entirely** (its hCaptcha doc 404s; "service not supported"), and for invisible Enterprise the token _is_ a passive **risk score** — so an out-of-band token is rejected even when `siteverify` passes. The bot therefore no longer fires a doomed proxyless request (no `rqdata` → `SolverUnavailable`); a non-solvable challenge is recorded `captcha_blocked`. Run from a clean local IP, no proxies for the 5-apply test.
 - **Profile data** — used **as-is**, including the provided email (Lever has **no blocking verify step** — success is the `/thanks` redirect). The confirmation-email poll is **optional**: only if you set `JOOBLE_IMAP_*` does the bot additionally capture Lever's post-submit confirmation email as best-effort evidence.
 
-**Verified:** the full pipeline **submits end-to-end** — a headful `--submit-mode sandbox` run on `leverdemo` **silent-passes the invisible hCaptcha and succeeds** (`SUCCESS`, `silent_pass: true`), reproduced across runs; dry-run on the 5 real postings is `DRY_RUN_READY` + screenshots, `navigator.webdriver=false`, reproducibly in headless Docker. The third-party solvers were tested with live keys and found unreliable for Lever (above) — which is *why* the working silent-pass is the path, not a solver.
+**Verified:** the full pipeline **submits end-to-end** — a headful submit **silent-passes the invisible hCaptcha and succeeds** on both `leverdemo` and the **real** skillerszone posting ("Application submitted!"); across the 5 real postings, 1 `SUCCESS` / 3 `DUPLICATE` / 1 fail-closed, `navigator.webdriver=false`, engine reproducible headless in Docker. The third-party solvers were tested with live keys and found unreliable for Lever (above) — which is *why* the working silent-pass is the path, not a solver.
 
-**Remaining unknowns (real-tenant only):** the silent-pass rate on a *real* company's Enterprise config (proven on the `leverdemo` demo tenant, which may score more permissively) and across IP tiers — the load-bearing production KPI; the interactive-challenge rate; whether a Lever applicant email-verification step fires. Real-posting submits stay opt-in (firing live applications to real employers from a fabricated profile is out of scope).
+**Remaining unknowns:** the silent-pass *rate* across real tenants and IP tiers — it's demonstrated on `leverdemo` and one real posting (skillerszone), but each tenant's Enterprise config + the session's IP reputation set a per-run pass probability that only volume can measure (the load-bearing production KPI); plus the interactive-challenge rate and whether a Lever applicant email-verification step fires.
 
 ## Ethics & legal note
 
