@@ -201,6 +201,31 @@ Outputs land in `output/`: `results.json` (one `ApplyResult` per vacancy, writte
 
 ---
 
+## The silent-pass test (headful submit) — the one thing only a human-looking session can prove
+
+**What's verified vs. not.** The full pipeline — navigate → fill → upload résumé → answer cards → **POST** → classify → evidence — works end-to-end (dry-run on the 5 real postings is `DRY_RUN_READY` with screenshots; a `--submit-mode sandbox` POST to `leverdemo` is exercised). The **one** thing that can't be proven headless is the **silent-pass**: Lever's *invisible* hCaptcha scores a live, human-looking session, and **headless is itself a detection signal**, so a headless submit gets challenged → `CAPTCHA_BLOCKED`. The silent-pass needs **real headful Chrome + a clean residential IP**.
+
+**Run it (on your own machine, visible window):**
+
+```bash
+# Sandbox = Lever's own demo tenant. A REAL POST, but to a fake company — safe, spams no employer.
+uv run applyme run \
+  --url https://jobs.lever.co/leverdemo/33538a2f-d27d-4a96-8f05-fa4b0e4d940e \
+  --submit-mode sandbox --headful
+```
+
+**How to read the result** (`output/leverdemo/<id>/final.png` + the `result_string` in `output/results.json`):
+
+| Outcome | Means |
+|---|---|
+| **`success`** → redirected to `/<co>/<id>/thanks` | The **silent-pass worked**: a clean headful session minted the hCaptcha token natively and the application submitted. This is the load-bearing KPI passing. |
+| **`captcha blocked`** → stayed on `/apply`, a challenge rendered | The invisible hCaptcha did **not** silent-pass (still flagged the session) and the third-party solvers can't clear Lever's Enterprise hCaptcha — the honest, documented 2026 reality ([REPORT §4](docs/REPORT.md)). |
+| **`failed:<reason>`** → 400 re-render, a field flagged | A form/validation issue (e.g. the fabricated profile vs. résumé mismatch), distinct from the captcha. |
+
+A single run is one sample; the **silent-pass *rate*** is the average over several (vary the seed / wait between attempts). Only after a real-headful `success` is the captcha strategy proven; until then it is **best-effort with an honest `captcha_blocked` fallback** (mirroring what every shipping competitor does — surface to a human or skip). Promote `sandbox` → `real` only when you've confirmed the path on `leverdemo` and intend to fire live applications.
+
+---
+
 ## Docker: reproducible browser run
 
 A `Dockerfile` ships a headless **Chromium** runtime so the browser path runs anywhere — a server, CI, or a machine with no desktop Chrome — with zero host setup. The image installs Chromium + the project (via `uv sync --frozen`, exact `uv.lock` pins) and runs as a non-root user.
