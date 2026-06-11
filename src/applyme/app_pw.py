@@ -152,8 +152,10 @@ async def _submit_with_captcha(page: object, v: Vacancy, spec: object, settings:
     Lever's inline script runs `hcaptcha.execute()` then fires the native multipart POST. The
     reliable signal is the **navigation**: a silent pass lands on `/<co>/<id>/thanks`. We do NOT poll
     the `h-captcha-response` token (it's gone once the page navigates). A solver is invoked ONLY if an
-    interactive challenge iframe actually renders (and a key is set) — bounded, since the 2026 solver
-    market is unreliable for Lever's invisible Enterprise hCaptcha.
+    interactive challenge iframe actually renders (and a key is set) — and it **fails closed**: with no
+    `rqdata`/proxy captured, `solve_hcaptcha` raises `SolverUnavailable`, which we log and record as
+    `captcha_blocked` rather than injecting an empty token. The 2026 solver market is delisted/unreliable
+    for Lever's invisible Enterprise hCaptcha (docs/REPORT.md §4), so this path is honest insurance only.
     """
     with contextlib.suppress(Exception):
         await page.click("button[type=submit]", timeout=15000)  # type: ignore[attr-defined]
@@ -170,19 +172,29 @@ async def _submit_with_captcha(page: object, v: Vacancy, spec: object, settings:
     if not (challenge and (ck or tk)):
         return "none"
     from applyme.captcha.base import solve_hcaptcha
+    from applyme.errors import SolverUnavailable
 
-    with contextlib.suppress(Exception):
-        async with asyncio.timeout(45):  # solvers are unreliable for Lever Enterprise hCaptcha — attempt, don't stall
+    try:
+        async with asyncio.timeout(45):  # bounded: the 2026 solver market is dead for Lever — attempt, never stall
             ua = str(await page.evaluate("navigator.userAgent"))  # type: ignore[attr-defined]
             token, vendor = await solve_hcaptcha(
-                page_url=str(v.apply_url), ua=ua, rqdata=getattr(spec, "rqdata", None),
-                capsolver_key=ck, twocaptcha_key=tk,
+                page_url=str(v.apply_url),
+                ua=ua,
+                rqdata=getattr(spec, "rqdata", None),
+                capsolver_key=ck,
+                twocaptcha_key=tk,
             )
             await page.eval_on_selector('[name="h-captcha-response"]', "(e, v) => { e.value = v; }", token)  # type: ignore[attr-defined]
             with contextlib.suppress(Exception):
                 await page.click("button[type=submit]", timeout=15000)  # type: ignore[attr-defined]
                 await page.wait_for_url("**/thanks", timeout=20000)  # type: ignore[attr-defined]
             return vendor
+    except SolverUnavailable as e:
+        # No usable solver for Lever's invisible Enterprise hCaptcha (delisted vendor / no rqdata
+        # captured). Record honestly — never inject an empty/invalid token. → CAPTCHA_BLOCKED.
+        log.warning("captcha_solver_unavailable", reason=str(e))
+    except Exception as e:  # noqa: BLE001 — bounded best-effort: a dead solver must not stall the run
+        log.warning("captcha_solver_failed", error=str(e))
     return "none"
 
 

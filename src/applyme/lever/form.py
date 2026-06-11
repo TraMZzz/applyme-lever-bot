@@ -42,6 +42,10 @@ def parse_form_html(html: str, posting_url: str) -> FormSpec:
         sitekey=sitekey_m.group(1) if sitekey_m else "",
         account_id=account_id or "",
         posting_id=posting_url.rstrip("/").split("/")[-2],
+        # Lever's STATIC apply HTML carries no rqdata (verified: 0 hits in the live capture); the invisible
+        # Enterprise widget injects it at runtime via secure-api.js, capturable only live from the
+        # `api.hcaptcha.com/checksiteconfig` response (`c.req`). Left None — we run no out-of-band solver
+        # path (no vendor reliably solves it in 2026; see docs/REPORT.md §4).
         rqdata=None,
     )
 
