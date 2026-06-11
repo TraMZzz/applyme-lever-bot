@@ -1,0 +1,120 @@
+"""Patchright single-vacancy apply path.
+
+Mirrors the zendriver flow (warm → /apply → parse → answer → fill → evidence/submit) but on
+patchright, whose auto-waiting survives Lever's parseResume re-render. Reuses the engine-agnostic
+pieces: parse_form_html, resolve_answers, classify_outcome.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import random
+from datetime import UTC, datetime
+from pathlib import Path
+
+import structlog
+
+from applyme.browser.human import sample_delay
+from applyme.browser.pw_engine import assert_no_webdriver_leak, launch_playwright
+from applyme.config import Settings
+from applyme.evidence import redact_html
+from applyme.lever.form import parse_form_html
+from applyme.lever.pw_fill import pw_fill_form
+from applyme.lever.submit import classify_outcome
+from applyme.models import ApplyResult, CandidateProfile, SubmitMode, Vacancy
+
+log = structlog.get_logger()
+
+
+def _now() -> datetime:
+    return datetime.now(UTC)
+
+
+async def _capture(page: object, out_dir: Path, label: str) -> dict[str, str | None]:
+    """Screenshot + redacted HTML via Playwright; bounded + best-effort."""
+    out_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
+    paths: dict[str, str | None] = {"screenshot": None, "html": None}
+    with contextlib.suppress(Exception):
+        shot = out_dir / f"{label}.png"
+        await page.screenshot(path=str(shot), full_page=True)  # type: ignore[attr-defined]
+        paths["screenshot"] = str(shot)
+    with contextlib.suppress(Exception):
+        snap = out_dir / f"{label}.html"
+        snap.write_text(redact_html(await page.content()))  # type: ignore[attr-defined]
+        paths["html"] = str(snap)
+    return paths
+
+
+async def _warm(page: object, company: str, apply_url: str, rng: random.Random) -> None:
+    """Light Cloudflare warm-up: company page → dwell → posting, before /apply."""
+    with contextlib.suppress(Exception):
+        await page.goto(f"https://jobs.lever.co/{company}", wait_until="domcontentloaded", timeout=30000)  # type: ignore[attr-defined]
+        await asyncio.sleep(sample_delay("read_page", rng))
+        await page.goto(apply_url.removesuffix("/apply"), wait_until="domcontentloaded", timeout=30000)  # type: ignore[attr-defined]
+        await asyncio.sleep(sample_delay("read_page", rng))
+
+
+async def apply_one_pw(
+    v: Vacancy,
+    profile: CandidateProfile,
+    settings: Settings,
+    submit_mode: str,
+    headful: bool,
+    out_dir: Path,
+    rng_seed: int,
+) -> ApplyResult:
+    """Apply to one vacancy via patchright. Dry-run fills + captures evidence and stops before POST."""
+    from applyme.app import resolve_answers
+
+    started = _now()
+    rng = random.Random(rng_seed)
+    ev_dir = out_dir / v.company / v.posting_id
+
+    async with launch_playwright(
+        headful=headful, chrome_path=settings.chrome_path, no_sandbox=settings.chrome_no_sandbox
+    ) as page:
+        await _warm(page, v.company, str(v.apply_url), rng)
+        await page.goto(str(v.apply_url), wait_until="domcontentloaded", timeout=30000)
+        await page.wait_for_selector('[name="resume"]', state="attached", timeout=20000)
+        await assert_no_webdriver_leak(page)
+
+        spec = parse_form_html(await page.content(), posting_url=str(v.apply_url))
+        log.info("pw_apply", at="parsed", fields=len(spec.standard_fields), cards=len(spec.cards))
+
+        answers, unmapped = await resolve_answers(profile, spec, settings)
+        if unmapped:
+            ev = await _capture(page, ev_dir, "unmapped")
+            return ApplyResult(
+                posting_url=str(v.url), company=v.company, posting_id=v.posting_id,
+                status="FAILED", reason=f"FORM_SCHEMA_UNMAPPED:{unmapped[0]}", flagged_fields=unmapped,
+                rng_seed=rng_seed, screenshot_paths=[s for s in [ev.get("screenshot")] if s],
+                html_snapshot_path=ev.get("html"), started_at=started, finished_at=_now(),
+            )
+
+        await pw_fill_form(page, spec, profile, answers, rng_seed)
+
+        if submit_mode in (SubmitMode.DRY_RUN, "dry-run"):
+            ev = await _capture(page, ev_dir, "dry-run")
+            return ApplyResult(
+                posting_url=str(v.url), company=v.company, posting_id=v.posting_id,
+                status="DRY_RUN_READY", rng_seed=rng_seed,
+                screenshot_paths=[s for s in [ev.get("screenshot")] if s],
+                html_snapshot_path=ev.get("html"), started_at=started, finished_at=_now(),
+            )
+
+        # Submit (sandbox/real): trigger invisible hCaptcha + native form POST, then classify.
+        with contextlib.suppress(Exception):
+            await page.click("button[type=submit]", timeout=15000)
+            await page.wait_for_load_state("networkidle", timeout=20000)
+        final_url = page.url
+        body = await page.content()
+        outcome = classify_outcome(final_url=final_url, http_status=200, body=body)
+        ev = await _capture(page, ev_dir, "final")
+        return ApplyResult(
+            posting_url=str(v.url), company=v.company, posting_id=v.posting_id,
+            status=outcome.status, reason=outcome.reason, flagged_fields=outcome.flagged_fields,
+            final_url=final_url, rng_seed=rng_seed,
+            screenshot_paths=[s for s in [ev.get("screenshot")] if s],
+            html_snapshot_path=ev.get("html"), started_at=started, finished_at=_now(),
+        )

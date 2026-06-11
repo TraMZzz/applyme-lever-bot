@@ -3,6 +3,7 @@
 import shutil
 import subprocess
 from pathlib import Path
+from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -33,6 +34,9 @@ class Settings(BaseSettings):
     submit_mode: SubmitMode = SubmitMode.DRY_RUN
     headful: bool = True
     max_applies: int = 5
+    # Browser engine: "patchright" (Playwright, auto-waits through Lever's parseResume re-render —
+    # the working default) or "zendriver" (raw-CDP, stealthiest but hangs on the re-render).
+    engine: Literal["patchright", "zendriver"] = "patchright"
     chrome_path: str | None = None
     chrome_no_sandbox: bool = False  # disable Chrome's sandbox (root/containers/CI); auto-falls-back on connect failure
 

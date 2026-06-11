@@ -16,8 +16,12 @@ def build_parser() -> argparse.ArgumentParser:
     src.add_argument("--url", type=str)
     run.add_argument("--profile", default="data/profile.json")
     run.add_argument("--submit-mode", choices=["dry-run", "sandbox", "real"], default="dry-run")
-    run.add_argument("--headful", action="store_true", default=True)
+    # --headful / --headless are optional overrides; when neither is passed, headful comes from
+    # Settings (env JOOBLE_HEADFUL). store_true/store_false share a dest, default None = "unset".
+    run.add_argument("--headful", dest="headful", action="store_true", default=None)
+    run.add_argument("--headless", dest="headful", action="store_false")
     run.add_argument("--max-applies", type=int, default=5)
+    run.add_argument("--engine", choices=["patchright", "zendriver"], default=None)
     return p
 
 

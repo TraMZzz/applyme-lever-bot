@@ -15,22 +15,19 @@ def load_profile(profile_json: Path, resume_path: Path) -> CandidateProfile:
     return CandidateProfile.model_validate(data)  # extra='forbid' rejects unknown keys (e.g. webhook_url)
 
 
+def parse_vacancy(url: str) -> Vacancy | None:
+    """Parse a jobs.lever.co URL into a Vacancy (company + posting_id), or None if not a Lever URL."""
+    m = _LEVER_RE.search(url.strip().strip("<>"))
+    if not m:
+        return None
+    return Vacancy.model_validate(
+        {
+            "company": m["company"],
+            "posting_id": m["posting_id"],
+            "url": f"https://jobs.lever.co/{m['company']}/{m['posting_id']}",
+        }
+    )
+
+
 def load_vacancies(path: Path) -> list[Vacancy]:
-    out: list[Vacancy] = []
-    for line in path.read_text().splitlines():
-        line = line.strip().strip("<>")
-        if not line:
-            continue
-        m = _LEVER_RE.search(line)
-        if not m:
-            continue
-        out.append(
-            Vacancy.model_validate(
-                {
-                    "company": m["company"],
-                    "posting_id": m["posting_id"],
-                    "url": f"https://jobs.lever.co/{m['company']}/{m['posting_id']}",
-                }
-            )
-        )
-    return out
+    return [v for line in path.read_text().splitlines() if (v := parse_vacancy(line)) is not None]

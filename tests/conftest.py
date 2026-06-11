@@ -52,6 +52,11 @@ class _FakeElement:
         """Record that the resume file was uploaded."""
         self._page.uploaded_file = path
 
+    async def clear_input(self) -> None:
+        """Clear this element's recorded value (mirrors zendriver Element.clear_input)."""
+        if self._name is not None:
+            self._page.typed[self._name] = ""
+
     async def set_value(self, value: str) -> None:
         if self._name is not None:
             self._page.typed[self._name] = value
@@ -135,6 +140,8 @@ class _FakePage:
         # _settle() readback: join the standard fields' current values.
         if "querySelectorAll" in expression:
             return "|".join(self.typed.get(n, "") for n in ("name", "email", "phone"))
+        if "readyState" in expression:
+            return "complete"  # the fake page is always loaded
         if "h-captcha-response" in expression:
             return ""  # no challenge in the fake
         if "iframe" in expression:

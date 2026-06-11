@@ -8,14 +8,18 @@ their visible option text/value (matching how the form parser exposes options).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import random
 from typing import TYPE_CHECKING
 
+import structlog
 import zendriver as zd
 from zendriver import cdp
 
 from applyme.browser.human import Point, bezier_path, sample_delay
+
+log = structlog.get_logger()
 
 if TYPE_CHECKING:
     from applyme.models import CardField
@@ -77,39 +81,75 @@ class HumanActions:
         await self._click_element(await self.tab.select(selector))
 
     async def type_into(self, tab: zd.Tab, selector: str, text: str) -> None:
-        """Focus the field, CLEAR it, then send each character with a per-keystroke delay.
+        """Focus, CLEAR, then type human-like; fall back to a bounded JS set if the page stalls.
 
-        The clear is essential: Lever's `parseResume` autofills name/email/phone after the resume
-        upload, so typing without clearing appends ("Ethan CalderEthan Calder") and the override
-        read-back fails verify_overrides. clear_input empties the field first.
+        The clear is essential: Lever's `parseResume` autofills name/email/phone, so typing without
+        clearing appends ("Ethan CalderEthan Calder"). But the post-parseResume page intermittently
+        HANGS CDP Runtime calls (clear_input / send_keys go through Runtime.callFunctionOn), so the
+        human-typing attempt is bounded; if it stalls, set the value via one bounded evaluate so the
+        field is still filled (losing per-keystroke realism for that field only — better than hanging
+        the whole apply).
         """
-        element = await tab.select(selector)
-        await self._click_element(element)
-        await element.clear_input()
-        for char in text:
-            await element.send_keys(char)
-            await asyncio.sleep(sample_delay("keystroke", self.rng))
+        try:
+            async with asyncio.timeout(15):
+                element = await tab.select(selector)
+                await self._click_element(element)
+                await element.clear_input()
+                for char in text:
+                    await element.send_keys(char)
+                    await asyncio.sleep(sample_delay("keystroke", self.rng))
+            return
+        except Exception:  # noqa: BLE001 — page stalled mid-type; fall back to a bounded JS value-set
+            log.warning("type_into_fallback_js", selector=selector)
+        js = (
+            "(() => {"
+            f"  const e = document.querySelector({json.dumps(selector)}); if (!e) return false;"
+            f"  e.value = {json.dumps(text)};"
+            "  e.dispatchEvent(new Event('input', {bubbles: true}));"
+            "  e.dispatchEvent(new Event('change', {bubbles: true}));"
+            "  return true; })()"
+        )
+        with contextlib.suppress(Exception):
+            async with asyncio.timeout(8):
+                await tab.evaluate(js)
 
     async def answer_card_field(self, tab: zd.Tab, field: CardField, answer: str) -> None:
-        """Answer one CardField by its visible option text / value.
+        """Answer one CardField via a GLOBAL evaluate, dispatching input/change as a user would.
 
-        radio/checkbox → click the option whose value or text equals `answer`;
-        dropdown → select the <option> whose visible text equals `answer`;
-        text/textarea → type the answer into the field.
+        Lever re-renders the form after parseResume, which stales node objectIds — so node-based
+        clicks/typing (the human path) HANG and a hung-call cancellation corrupts the CDP connection.
+        Setting state through a global evaluate (querySelector / getElementsByName) stays responsive.
+        radio/checkbox → check the option by value; dropdown → select the <option>; text/textarea →
+        set value. Best-effort + bounded.
         """
         if not answer:
             return
-        if field.field_type in ("multiple-choice", "multiple-select"):
-            base = f'[name="{field.input_name}"]'
-            try:
-                option = await tab.select(f'{base}[value="{answer}"]')
-            except Exception:  # noqa: BLE001 — fall back to matching by visible text
-                option = await tab.find(answer, best_match=True)
-            await self._click_element(option)
-        elif field.field_type == "dropdown":
+        if field.field_type == "dropdown":
             await self._select_dropdown(tab, field.input_name, answer)
+            return
+        # NB: set state only, do NOT dispatch input/change — firing those re-triggers Lever's
+        # reactive re-render, which hangs the next CDP evaluate. Sufficient for the dry-run (state is
+        # visible in the evidence screenshot); a real submit would need a dispatch + stability handling.
+        if field.field_type in ("multiple-choice", "multiple-select"):
+            js = (
+                "(() => {"
+                f"  const els = [...document.getElementsByName({json.dumps(field.input_name)})];"
+                f"  const el = els.find(e => e.value === {json.dumps(answer)}) || els[0];"
+                "  if (!el) return false;"
+                "  el.checked = true;"
+                "  return true; })()"
+            )
         else:  # text / textarea
-            await self.type_into(tab, f'[name="{field.input_name}"]', answer)
+            js = (
+                "(() => {"
+                f"  const el = document.getElementsByName({json.dumps(field.input_name)})[0];"
+                "  if (!el) return false;"
+                f"  el.value = {json.dumps(answer)};"
+                "  return true; })()"
+            )
+        with contextlib.suppress(Exception):
+            async with asyncio.timeout(8):
+                await tab.evaluate(js)
 
     async def _select_dropdown(self, tab: zd.Tab, name: str, answer: str) -> None:
         """Choose an <option> on a real <select> by visible text or value, dispatching change.
@@ -131,4 +171,6 @@ class HumanActions:
             "  s.dispatchEvent(new Event('change', {bubbles: true}));"
             "  return true; })()"
         )
-        await tab.evaluate(js)
+        with contextlib.suppress(Exception):
+            async with asyncio.timeout(8):
+                await tab.evaluate(js)
