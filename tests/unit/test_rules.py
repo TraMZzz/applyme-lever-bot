@@ -81,6 +81,22 @@ def test_sponsorship_phrased_with_legally_is_not_work_auth():
     assert ans["cards[c][field0]"] == "No"  # requires_sponsorship is False
 
 
+def test_free_text_eligibility_answered_from_profile_fact():
+    # A free-text (no-options) work-auth question is a known profile FACT, not an LLM guess —
+    # answer it directly rather than leaving it unmapped (which would fail closed).
+    ans, unmapped = map_answers(
+        _profile(), [_card("Are you legally authorized to work in the US?", [], ftype="textarea")]
+    )
+    assert ans["cards[c][field0]"] == "Yes" and not unmapped
+
+
+def test_authorized_without_sponsorship_inverts():
+    # "authorized to work WITHOUT sponsorship?" → Yes when the candidate does NOT require sponsorship.
+    card = _card("Are you authorized to work in the US without the need for sponsorship?", ["Yes", "No"])
+    ans, _ = map_answers(_profile(), [card])  # _profile has requires_sponsorship=False
+    assert ans["cards[c][field0]"] == "Yes"
+
+
 def test_is_sensitive_flags_eligibility_and_eeo_not_skills():
     assert is_sensitive("Do you now or in the future require visa sponsorship?")
     assert is_sensitive("Are you a US citizen subject to ITAR/export-control rules?")

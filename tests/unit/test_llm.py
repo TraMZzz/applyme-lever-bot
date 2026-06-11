@@ -21,3 +21,9 @@ def test_validate_choice_terse_reply_against_long_options():
 
 def test_validate_choice_picks_named_option():
     assert validate_choice("California", ["Alabama", "California", "Colorado"]) == "California"
+
+
+def test_validate_choice_normalizes_smart_quotes():
+    # Lever options often use a curly apostrophe; the model replies with a straight one.
+    opts = ["I’ve managed social channels and tailored platform-specific strategies.", "I’ve done none of that."]
+    assert validate_choice("I've managed social channels and tailored platform-specific strategies.", opts) == opts[0]

@@ -33,6 +33,17 @@ def _pick(options: list[str], want: str) -> str | None:
     return None
 
 
+def _yes_no(f: CardField, yes: bool) -> str | None:
+    """Answer a Yes/No eligibility fact from the profile.
+
+    For a choice field, pick the option containing Yes/No; for a free-text field (no options),
+    answer the bare word directly — the value is a profile FACT, not an LLM guess, so it should be
+    given rather than left unmapped (which would fail closed under the sensitive-question guard).
+    """
+    want = "Yes" if yes else "No"
+    return want if not f.options else _pick(f.options, want)
+
+
 def _answer(profile: CandidateProfile, f: CardField) -> str | None:
     """Map a single CardField to a profile-derived answer, or return None if unmappable.
 
@@ -43,11 +54,11 @@ def _answer(profile: CandidateProfile, f: CardField) -> str | None:
     """
     t = f.text.lower()
     if "sponsor" in t or "visa" in t:
-        return _pick(f.options, "Yes" if profile.requires_sponsorship else "No")
+        return _yes_no(f, not profile.requires_sponsorship if "without" in t else profile.requires_sponsorship)
     if any(k in t for k in ("authorized to work", "eligible to work", "work authoriz", "legally")):
-        return _pick(f.options, "Yes" if profile.work_authorized else "No")
+        return _yes_no(f, profile.work_authorized)
     if "relocate" in t:
-        return _pick(f.options, "Yes" if profile.willing_to_relocate else "No")
+        return _yes_no(f, profile.willing_to_relocate)
     if "salary" in t or "compensation" in t:
         return str(profile.expected_salary) if profile.expected_salary else None
     if any(k in t for k in ("i agree", "i certify", "i acknowledge", "i consent", "submit application")):

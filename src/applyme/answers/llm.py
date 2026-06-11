@@ -8,6 +8,17 @@ import re
 
 from anthropic import AsyncAnthropic
 
+# Smart punctuation → ASCII, so an option like "I've managed…" (curly apostrophe) still matches a
+# model reply that uses a straight quote. Also collapses whitespace.
+_SMART = {"’": "'", "‘": "'", "“": '"', "”": '"', "–": "-", "—": "-", "…": "..."}
+
+
+def _norm(s: str) -> str:
+    """Lowercase + ASCII-fold smart punctuation + collapse whitespace, for tolerant comparison."""
+    for a, b in _SMART.items():
+        s = s.replace(a, b)
+    return " ".join(s.lower().split())
+
 
 def validate_choice(answer: str, options: list[str]) -> str | None:
     """Return the option `answer` resolves to, tolerating a verbose model reply, else None.
@@ -18,10 +29,10 @@ def validate_choice(answer: str, options: list[str]) -> str | None:
     LONGEST option so the most specific choice wins. Comparison is case-insensitive; the original
     option casing is returned.
     """
-    norm = answer.strip().lower()
+    norm = _norm(answer)
     if not norm:
         return None
-    opts = [(o, o.strip().lower()) for o in options]
+    opts = [(o, _norm(o)) for o in options]
 
     # 1. Exact match (the constrained-output happy path).
     for original, low in opts:
@@ -29,7 +40,7 @@ def validate_choice(answer: str, options: list[str]) -> str | None:
             return original
 
     # 2. First non-empty line equals an option (model added a blank line + reasoning below).
-    first_line = next((ln.strip() for ln in norm.splitlines() if ln.strip()), "")
+    first_line = next((_norm(ln) for ln in answer.splitlines() if ln.strip()), "")
     for original, low in opts:
         if low == first_line:
             return original
