@@ -6,6 +6,8 @@ the per-vacancy browser flow lives in `app_pw` (patchright). `run_command` is th
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import random
 from typing import Any
 
@@ -65,8 +67,15 @@ async def resolve_answers(
             if is_sensitive(field.text):
                 log.warning("llm_skipped_sensitive_question", field=field.input_name, question=field.text[:80])
                 continue
-            ans = await answer_question(llm_key, profile_summary, field.text, field.options, settings.llm_model)
-            if ans is not None:
+            # Hard-bound the otherwise-unbounded SDK call: a slow/stalled request must not eat the
+            # per-apply budget. On timeout the field stays unmapped (fail-closed), never invented.
+            ans = None
+            with contextlib.suppress(TimeoutError):
+                async with asyncio.timeout(settings.llm_timeout_s):
+                    ans = await answer_question(llm_key, profile_summary, field.text, field.options, settings.llm_model)
+            if ans is None:
+                log.warning("llm_answer_unavailable", field=field.input_name, timeout_s=settings.llm_timeout_s)
+            else:
                 answers[field.input_name] = ans
     return answers, [name for name in unmapped if name not in answers]
 
@@ -119,6 +128,8 @@ async def run_command(args: Any) -> None:
             log.warning("apply_attempt_failed", company=v.company, posting_id=v.posting_id, error=str(_apply_err))
             raise PermanentError(f"apply attempt failed: {_apply_err}") from _apply_err
 
-    results = await run_all(vacancies, apply_fn, out=Path("output/results.json"))
+    timeout_arg = getattr(args, "per_apply_timeout", None)
+    per_apply_timeout = settings.per_apply_timeout_s if timeout_arg is None else timeout_arg
+    results = await run_all(vacancies, apply_fn, out=Path("output/results.json"), per_apply_timeout=per_apply_timeout)
     for r in results:
         log.info("apply_result", company=r.company, posting_id=r.posting_id, result=r.result_string)

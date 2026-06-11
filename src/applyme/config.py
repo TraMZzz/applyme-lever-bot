@@ -3,11 +3,15 @@
 import shutil
 import subprocess
 from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from applyme.models import SubmitMode
+
+if TYPE_CHECKING:
+    from applyme.browser.motion import MotionEngine
 
 _CHROME_CANDIDATES = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -27,12 +31,17 @@ class Settings(BaseSettings):
     twocaptcha_api_key: SecretStr | None = None
     llm_api_key: SecretStr | None = None
     llm_model: str = "claude-haiku-4-5-20251001"
+    llm_timeout_s: float = 30.0  # hard ceiling per card-answer LLM call (the SDK call is otherwise unbounded)
     imap_host: str = "imap.gmail.com"
     imap_user: str | None = None
     imap_password: SecretStr | None = None
     submit_mode: SubmitMode = SubmitMode.DRY_RUN
     headful: bool = True
     max_applies: int = 5
+    # Per-vacancy wall-clock ceiling. dry-run fits easily in 180s; a real submit run (warm dwell ×2 +
+    # human typing + pre-submit dwell + the dead /thanks wait + recorded motion) needs more headroom —
+    # raise it (e.g. 600) for sandbox/real measurement so the run reaches a captcha verdict, not a timeout.
+    per_apply_timeout_s: float = 180.0
     chrome_path: str | None = None
     chrome_no_sandbox: bool = False  # disable Chrome's sandbox (root/containers/CI); auto-falls-back on connect failure
     # Stealth / silent-pass tuning (see docs/REPORT.md §4 — the unattended captcha path)
@@ -40,6 +49,9 @@ class Settings(BaseSettings):
     browser_locale: str = "en-US"  # coherence-pinned; do NOT hand-set a UA/Accept-Language (desyncs client-hints)
     browser_timezone: str | None = None  # set to match the egress-IP geo (e.g. "America/New_York") when it drifts
     ipqs_api_key: SecretStr | None = None  # optional: IPQualityScore key for the egress-IP reputation pre-flight
+    # Real recorded-human motion replay (the behavioural silent-pass lever — see docs/REPORT.md §4a).
+    motion_traces: str | None = None  # path to scripts/record_motion.py output; None ⇒ synthetic Bézier motion
+    motion_source: Literal["auto", "recorded", "synthetic"] = "auto"  # force the recorded/synthetic source
     proxy_server: str | None = (
         None  # optional sticky residential/mobile exit, e.g. "http://host:port" (solve-IP==submit-IP)
     )
@@ -56,6 +68,12 @@ class Settings(BaseSettings):
         if self.proxy_password:
             cfg["password"] = self.proxy_password.get_secret_value()
         return cfg
+
+    def motion_engine(self) -> "MotionEngine":
+        """Build the human-motion replay engine from `motion_traces`/`motion_source` (synthetic if unset)."""
+        from applyme.browser.motion import load_motion_engine
+
+        return load_motion_engine(Path(self.motion_traces) if self.motion_traces else None, self.motion_source)
 
 
 def find_chrome(override: str | None = None) -> str:

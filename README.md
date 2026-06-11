@@ -4,7 +4,7 @@ Automated job-application bot for **[jobs.lever.co](https://jobs.lever.co)**. Gi
 
 Built as an engineering take-home: an auto-apply bot for Lever.
 
-> **Status: implemented; dry-run verified end-to-end.** The full apply pipeline (parse → fill → captcha → submit → evidence) is working code, and the dry-run path runs end-to-end on the real `leverdemo` `/apply` page (résumé upload → human-filled fields → cards answered → `DRY_RUN_READY` + screenshot), reproducibly in headless Docker. The architecture is in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); the deliverable report in [`docs/REPORT.md`](docs/REPORT.md).
+> **Status: implemented and working end-to-end.** The full apply pipeline (parse → fill → captcha → submit → evidence) is working code. On Lever's `leverdemo` sandbox a real headful submit **silent-passes the invisible Enterprise hCaptcha and succeeds** (`status: SUCCESS`, `silent_pass: true`), reproduced across runs; the 5 real postings run as `DRY_RUN_READY` + screenshots (no live application sent to a real employer). Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md); deliverable report: [`docs/REPORT.md`](docs/REPORT.md).
 
 ---
 
@@ -25,14 +25,14 @@ Inputs (candidate profile JSON, resume PDF, target URLs) are supplied **locally*
 
 ## Approach at a glance
 
-Drive the **real `/apply` form** through a **stealth Playwright (patchright) browser** whose session is hardened to push Lever's _invisible_ Enterprise hCaptcha toward a silent self-pass (the token is a passive risk score — there's no puzzle to solve and no out-of-band token it will accept; §4). This single decision fixes the four things that defeat a raw-HTTP approach at once: the Cloudflare TLS/JA4 fingerprint, the `__cf_bm` session cookie, the in-browser behavioral signals hCaptcha scores, and the JS-rendered per-posting custom questions. **Honest result (§4): even fully hardened + a clean mobile IP, the silent-pass does not reliably clear this captcha — no public stack does — so the bot fails closed with a truthful `captcha_blocked`** (the brief asks to *"pass **or** correctly handle"*).
+Drive the **real `/apply` form** through a **stealth Playwright (patchright) browser** whose session is hardened to push Lever's _invisible_ Enterprise hCaptcha toward a silent self-pass (the token is a passive risk score — there's no puzzle to solve and no out-of-band token it will accept; §4). This single decision fixes the four things that defeat a raw-HTTP approach at once: the Cloudflare TLS/JA4 fingerprint, the `__cf_bm` session cookie, the in-browser behavioral signals hCaptcha scores, and the JS-rendered per-posting custom questions. **Measured result (§4): on `leverdemo` the hardened headful session silent-passes the invisible hCaptcha and submits (`SUCCESS`), reproducibly** — the long-running "captcha blocked" turned out to be a submit-button bug, not the captcha. When the session's score is too low (stricter tenant, dirty IP) or a challenge renders, the bot **fails closed** with a truthful `captcha_blocked` — the other half of the brief's *"pass **or** correctly handle."*
 
 | Layer | Choice | One-line why |
 |---|---|---|
 | Language | **Python** | best-in-class browser tools are Python-first; Node's stealth ecosystem is decayed |
 | Browser engine | **patchright** (stealth Playwright fork) | `navigator.webdriver` genuinely false **and** it auto-waits through Lever's `parseResume` re-render — which hangs/crashes a raw-CDP driver (see below) |
 | Engine note | zendriver (raw CDP) **rejected after testing** | stealthiest transport, but its `Runtime.evaluate`/`callFunctionOn` **hang (headless) or crash the renderer (headful)** on Lever's reactive re-render, and a hung-call cancellation corrupts the connection — unrecoverable. Documented in [`REPORT`](docs/REPORT.md) §4. |
-| Captcha | **in-browser silent-pass, hardened — fails closed** | the token _is_ a passive risk score (verified §4); we drive it down (persistent profile, fingerprint coherence, IP pre-flight, behavioural telemetry) but **measured: even hardened + clean mobile IP it's still rejected** — so the bot records a truthful `captcha_blocked` |
+| Captcha | **in-browser silent-pass, hardened** | the token _is_ a passive risk score (§4); we drive it down (persistent profile, fingerprint coherence, IP pre-flight, behavioural telemetry) and **measured: it silent-passes on `leverdemo` → `SUCCESS`**; fails closed (`captcha_blocked`) when the score is too low |
 | Solver | **disabled / fail-closed** | CapSolver delisted hCaptcha; out-of-band tokens are score-rejected (§4). Wired but never fires a doomed request — records `captcha_blocked` honestly |
 | Human behavior | **log-normal delays** + **own stdlib Bézier mouse** | non-fixed timing + curved/in-element-random clicks + scroll, dispatched via Playwright's `page.mouse`; per-character typing |
 | Proxies | clean home IP (pre-flighted) · sticky mobile reserve | IP/ASN reputation is the deciding variable; a _rotating_ residential pool **raises** the score — avoided (§4) |
@@ -67,14 +67,14 @@ for each vacancy:
    answer custom "cards"
       │
       ▼
-   trigger hCaptcha (invisible Enterprise):
-      ├─ silent pass (clean session)            → submit
-      └─ token siteverify-rejected              → solver FAILS CLOSED (dead market / no rqdata) → CAPTCHA_BLOCKED
+   click Lever's real submit button → hcaptcha.execute() (invisible Enterprise):
+      ├─ silent pass (clean headful session)    → POST accepted
+      └─ score too low / challenge renders       → solver FAILS CLOSED (dead market) → CAPTCHA_BLOCKED
       │
       ▼
-   detect outcome:
-      ├─ redirect to /…/thanks                  → SUCCESS
-      └─ 400 re-render with error-message       → FAILED / CAPTCHA_BLOCKED
+   detect outcome (post-submit navigation):
+      ├─ /…/thanks  OR  …?LeverAppId=<uuid>      → SUCCESS   (leverdemo has no /thanks page)
+      └─ 400 re-render with a real error banner  → FAILED / CAPTCHA_BLOCKED
       │
       ▼
    on SUCCESS: capture Lever confirmation email as evidence (best-effort; not a gate)
@@ -132,7 +132,9 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 ├── scripts/
 │   ├── prepare_inputs.py        # inputs/ → data/
 │   ├── check_chrome.py          # smoke: drive Chrome on a live Lever page (no data/ or keys)
-│   └── fingerprint_check.py     # silent-pass readiness gate: score the session (CreepJS/incolumitas/IPQS/WebRTC) for free
+│   ├── fingerprint_check.py     # silent-pass readiness gate: score the session (CreepJS/incolumitas/IPQS/WebRTC) for free
+│   ├── record_motion.py         # record real human mouse/scroll/keystroke motion → data/motion/human_traces.json
+│   └── check_motion.py          # smoke: prove the motion engine drives real Chrome with human-shaped events
 ├── examples/                    # synthetic profile.example.json + vacancies.example.txt + resume.example.pdf (run from a clone)
 ├── screenshots/                 # the 6 committed run shots (5 dry-run + leverdemo submit) — the brief's evidence
 ├── data/                        # generated: profile.json, resume.pdf, vacancies.txt (gitignored)
@@ -202,10 +204,12 @@ uv run python scripts/fingerprint_check.py     # set JOOBLE_IPQS_API_KEY for the
 | Key | Enables | Without it |
 |---|---|---|
 | `JOOBLE_LLM_API_KEY` | LLM fallback for novel free-text custom questions (Claude Haiku) | rules-only; an unmapped required question fails closed (`FORM_SCHEMA_UNMAPPED`) |
+| `JOOBLE_LLM_TIMEOUT_S` · `JOOBLE_PER_APPLY_TIMEOUT_S` | hard ceilings: per card-answer LLM call (default 30s) and per-vacancy wall-clock (default 180s; raise for submit runs) | defaults apply; a slow LLM call still fails closed, a long submit run still gets guillotined at 180s |
 | `JOOBLE_CAPSOLVER_API_KEY` / `JOOBLE_TWOCAPTCHA_API_KEY` | the solver fallback path | solver fails closed (it's empirically dead for Lever — §4); silent-pass only |
 | `JOOBLE_IMAP_*` | capture the post-submit confirmation email as evidence | confirmation poll skipped (never blocks a result) |
 | `JOOBLE_IPQS_API_KEY` | egress-IP reputation axis in `fingerprint_check.py` | that axis prints "unknown" and proceeds |
 | `JOOBLE_PROXY_*` · `JOOBLE_USER_DATA_DIR` · `JOOBLE_BROWSER_TIMEZONE` | silent-pass tuning (proxy exit, persistent profile, geo coherence) | direct home IP, default profile dir, system timezone |
+| `JOOBLE_MOTION_TRACES` · `JOOBLE_MOTION_SOURCE` | replay **real recorded-human** mouse/scroll/keystroke motion in the captcha's scoring window (record via `scripts/record_motion.py`) | synthetic Bézier motion (the default — no regression) |
 
 Key dependencies _(versions verified 2026-06)_ — **core:** `patchright>=1.60.1` (stealth Playwright fork — the browser engine; drives system Chrome via `executable_path`), `httpx>=0.28.1` (solver REST + IP pre-flight), `pydantic[email]>=2.13` (`EmailStr` needs `email-validator`) + `pydantic-settings`, `selectolax` (safe HTML parsing); **quality:** `structlog` (tracing); **optional features:** `2captcha-python` (fallback solver), `imap-tools` (confirmation-email evidence). Human mouse/delays use **stdlib `random`/`math`** (no `numpy`). **Dev** (installed by `uv sync`): `ruff` (with `ASYNC` rules), `basedpyright` (strict on our code), `pytest` + `pytest-asyncio`.
 
@@ -224,6 +228,9 @@ uv run applyme run --vacancies data/vacancies.txt --profile data/profile.json --
 # Additional options
 #   --headful              open a visible browser window (default: headless)
 #   --max-applies N        cap the number of vacancies processed (default: 5)
+#   --per-apply-timeout S  per-vacancy wall-clock ceiling (default 180s). A submit run (warm dwell ×2
+#                          + human typing + pre-submit dwell + the dead /thanks wait + recorded motion)
+#                          needs more than a dry-run — pass e.g. 600 so it reaches a verdict, not a timeout.
 ```
 
 Outputs land in `output/` (git-ignored): `results.json` (one `ApplyResult` per vacancy, written incrementally) plus per-attempt evidence at `output/<company>/<posting_id>/<label>.png` (full-page screenshot) + `<label>.html` (redacted snapshot), where `<label>` is `dry-run`, `unmapped`, or `final`. The **committed** copies of the 6 run shots are in [`screenshots/`](screenshots/) (see its README).
@@ -232,17 +239,23 @@ Outputs land in `output/` (git-ignored): `results.json` (one `ApplyResult` per v
 
 ## The silent-pass test (headful submit) — the one thing only a human-looking session can prove
 
-**What's verified vs. not.** The full pipeline — navigate → fill → upload résumé → answer cards → **POST** → classify → evidence — works end-to-end (dry-run on the 5 real postings is `DRY_RUN_READY` with screenshots; a `--submit-mode sandbox` POST to `leverdemo` is exercised). The **one** thing that can't be proven headless is the **silent-pass**: Lever's *invisible* hCaptcha scores a live, human-looking session, and **headless is itself a detection signal**, so a headless submit gets challenged → `CAPTCHA_BLOCKED`. The silent-pass needs **real headful Chrome + a clean residential IP**.
+**What's verified.** The full pipeline — navigate → fill → upload résumé → answer cards → **POST** → classify → evidence — works end-to-end. On `leverdemo` a `--submit-mode sandbox` headful submit **silent-passes the invisible hCaptcha and succeeds** (`SUCCESS`, `silent_pass: true`), reproduced across runs; dry-run on the 5 real postings is `DRY_RUN_READY` with screenshots. The silent-pass needs **real headful Chrome** (headless is itself a detection signal) **+ a clean IP**; on a stricter tenant or a dirtier IP the same path **fails closed** (`captcha_blocked`).
 
 **Run it (on your own machine, visible window):**
 
 ```bash
 # 0) Gate readiness for free first — fix any red before spending a Lever attempt:
 uv run python scripts/fingerprint_check.py
+# 0b) (optional) Record real human motion + verify it drives Chrome — the behavioural lever (REPORT §4a):
+uv run python scripts/record_motion.py            # → data/motion/human_traces.json
+export JOOBLE_MOTION_TRACES=data/motion/human_traces.json
+uv run python scripts/check_motion.py             # prints "OK | … | source=recorded"
 # 1) Sandbox = Lever's own demo tenant. A REAL POST, but to a fake company — safe, spams no employer.
+#    --per-apply-timeout 600: a submit run does more than a dry-run (warm + dwell + the /thanks wait),
+#    so give it headroom or asyncio.timeout chops it mid-flight → RETRYABLE_ERROR with no verdict.
 uv run applyme run \
   --url https://jobs.lever.co/leverdemo/33538a2f-d27d-4a96-8f05-fa4b0e4d940e \
-  --submit-mode sandbox --headful
+  --submit-mode sandbox --headful --per-apply-timeout 600
 ```
 
 **How to read the result** (`output/leverdemo/<id>/final.png` + the `result_string` in `output/results.json`):
@@ -250,10 +263,10 @@ uv run applyme run \
 | Outcome | Means |
 |---|---|
 | **`success`** → redirected to `/<co>/<id>/thanks` | The **silent-pass worked**: a clean headful session minted the hCaptcha token natively and the application submitted. This is the load-bearing KPI passing. |
-| **`captcha blocked`** → stayed on `/apply`, a challenge rendered | The invisible hCaptcha did **not** silent-pass (still flagged the session) and the third-party solvers can't clear Lever's Enterprise hCaptcha — the honest, documented 2026 reality ([REPORT §4](docs/REPORT.md)). |
+| **`captcha blocked`** → stayed on `/apply`, a challenge rendered or the token was rejected | The invisible hCaptcha did **not** silent-pass this session (stricter tenant / dirtier IP). The bot records it honestly and never injects a fake token ([REPORT §4](docs/REPORT.md)). |
 | **`failed:<reason>`** → 400 re-render, a field flagged | A form/validation issue (e.g. the fabricated profile vs. résumé mismatch), distinct from the captcha. |
 
-**Measured (2026-06-11) — hardened, tested by elimination, still blocked.** The early sandbox submit returned **`captcha blocked`**, which pinned the cause: a **passive Stage-1 risk-score** decision, not a solvable puzzle ([REPORT §4](docs/REPORT.md)). That drove the **silent-pass hardening** (persistent Chrome profile, no forced viewport, locale/timezone coherence + WebRTC block, egress-IP pre-flight, behavioural telemetry before `execute()`). We then re-tested headful on the operator's Mac and **removed one variable at a time** — and it **still blocks**: a clean fingerprint (CreepJS/sannysoft/pixelscan) **+ a clean mobile/CGNAT IP** (hCaptcha's highest-trust tier) gets its minted token `siteverify`-rejected. The `final.html` proves it — token minted, no interactive challenge, `error-message` re-render. The CDP-input hypothesis is **refuted** (Chrome 149 closed crbug#1477537; `cdp-patches` has no macOS backend). **Honest conclusion: reliable _unattended_ silent-pass of Lever's invisible Enterprise hCaptcha is not achievable in 2026** — confirmed by elimination, and matching the finding that no public stack verifiably does it. The hardening still raises the silent-pass _probability_ and is the right architecture, but it isn't sufficient here; the bot **fails closed** (`captcha_blocked`, never a bad submit), satisfying the brief's _"pass **or** correctly handle."_ Production answer ([REPORT §5](docs/REPORT.md)): a mobile-IP fleet to maximise the opportunistic rate + human-in-the-loop / employer-API for the residual — what every shipping competitor does. To reproduce: `scripts/fingerprint_check.py` to gate readiness, then the `leverdemo` submit.
+**Measured (2026-06-11) — it silent-passes on `leverdemo`.** A headful `--submit-mode sandbox` run **succeeds**: `status: SUCCESS`, `silent_pass: true`, no challenge rendered, redirecting to `www.lever.co/hp-b?LeverAppId=<uuid>` (leverdemo has no `/thanks` page; Lever mints that application id only *after* accepting the POST). Reproduced with distinct app ids. **The correction worth reading ([REPORT §4](docs/REPORT.md)):** for most of this project the submit reported `captcha blocked`, and an extensive by-elimination investigation (fingerprint, IP tier, geo, motion) concluded the captcha was an unbeatable wall. **That was wrong — the cause was our own bug:** the bot clicked `button[type=submit]`, which on Lever's page is a *hidden* element; the real control is `button.template-btn-submit` (`type=button`), whose handler runs `hcaptcha.execute()` then POSTs. So the submit never fired and the page sat on `/apply`; a hidden "résumé too large" banner then made the classifier mislabel it `captcha blocked`. Fixing both, the silent-pass works. **Honest caveats:** `leverdemo` is a *demo* tenant that may score more permissively than a real company's Enterprise config; the score is probabilistic (opportunistic, not a guarantee); real-posting submit is opt-in and unmeasured. When the score is too low the bot **fails closed** (`captcha_blocked`, never a bad submit) — the brief's _"pass **or** correctly handle."_ Production answer ([REPORT §5](docs/REPORT.md)): an IP fleet to maximise the silent-pass rate + a human-in-the-loop / employer-API tail for the residual.
 
 ---
 
@@ -307,7 +320,7 @@ Each vacancy yields an `ApplyResult` with `status ∈ {SUCCESS, FAILED, CAPTCHA_
 |---|---|
 | Working script | `src/applyme/` |
 | Working code (repo/archive) | this repository |
-| Screenshots/video of 5 attempts | [`screenshots/`](screenshots/) — 5 dry-run shots on the real postings + the leverdemo submit (`captcha blocked`) |
+| Screenshots/video of 5 attempts | [`screenshots/`](screenshots/) — 5 dry-run shots on the real postings + the `leverdemo` submit (**`SUCCESS`** — silent-pass) |
 | Report: apply approach · captcha approach · frontend requests · failures · prod+X1000 | [`docs/REPORT.md`](docs/REPORT.md) |
 | Stack justification | this README + [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#stack-rationale) |
 
@@ -316,14 +329,14 @@ Each vacancy yields an `ApplyResult` with `status ∈ {SUCCESS, FAILED, CAPTCHA_
 ## Decisions (locked) & build-time unknowns
 
 **Locked decisions:**
-- **Submit mode** — `SUBMIT_MODE` defaults to `dry-run` (fill+solve, stop before POST). The **committed 5-attempt evidence is generated on Lever's `leverdemo` sandbox** (proves the pipeline without polluting real ATS); `real` (into the 5 live postings) requires the explicit flag, so a stray run can't fire a live application.
+- **Submit mode** — `SUBMIT_MODE` defaults to `dry-run` (fill, stop before POST). The 5 **real** postings ship as dry-run attempts (no live application sent); the **submit-success evidence is on Lever's `leverdemo` sandbox** (a real POST to a demo tenant — proves the pipeline + silent-pass without polluting a real ATS). `real` (into the 5 live postings) requires the explicit flag, so a stray run can't fire a live application.
 - **Scope** — clean modular single-process MVP CLI for the 5 applies; X1000-scale is the report's roadmap, not built.
 - **Captcha/proxy** — the design leans on the **in-browser silent pass**; the solver fallback is wired but **fails closed** and is **empirically unreliable** for Lever's invisible Enterprise hCaptcha. Verified 2026-06 (live keys + multi-source research, §4): CapSolver **delisted hCaptcha entirely** (its hCaptcha doc 404s; "service not supported"), and for invisible Enterprise the token _is_ a passive **risk score** — so an out-of-band token is rejected even when `siteverify` passes. The bot therefore no longer fires a doomed proxyless request (no `rqdata` → `SolverUnavailable`); a non-solvable challenge is recorded `captcha_blocked`. Run from a clean local IP, no proxies for the 5-apply test.
 - **Profile data** — used **as-is**, including the provided email (Lever has **no blocking verify step** — success is the `/thanks` redirect). The confirmation-email poll is **optional**: only if you set `JOOBLE_IMAP_*` does the bot additionally capture Lever's post-submit confirmation email as best-effort evidence.
 
-**Verified:** the full **dry-run runs end-to-end** on the real `leverdemo` `/apply` page (résumé upload → human-filled fields → cards answered → `DRY_RUN_READY` + screenshot), `navigator.webdriver=false`, reproducibly in headless Docker. The third-party solvers were tested with live keys and found unreliable for Lever (above). The full 5-vacancy submit run + per-vacancy screenshots + the REPORT §0 table is the remaining operator step.
+**Verified:** the full pipeline **submits end-to-end** — a headful `--submit-mode sandbox` run on `leverdemo` **silent-passes the invisible hCaptcha and succeeds** (`SUCCESS`, `silent_pass: true`), reproduced across runs; dry-run on the 5 real postings is `DRY_RUN_READY` + screenshots, `navigator.webdriver=false`, reproducibly in headless Docker. The third-party solvers were tested with live keys and found unreliable for Lever (above) — which is *why* the working silent-pass is the path, not a solver.
 
-**Remaining unknowns to verify (only reachable on a real submit run):** the real headful silent-pass rate on a clean residential IP (the load-bearing KPI, and whether a coherent fingerprint clears Lever's passive Enterprise risk score); the interactive-challenge rate; whether the authenticated POST re-fingerprints harder than the GET; whether a Lever applicant email-verification step fires. _(The `rqdata` question is now resolved (§4): it's absent from Lever's static HTML and injected at runtime by `secure-api.js` — and moot, since the token is a passive risk score no out-of-band solver can satisfy.)_
+**Remaining unknowns (real-tenant only):** the silent-pass rate on a *real* company's Enterprise config (proven on the `leverdemo` demo tenant, which may score more permissively) and across IP tiers — the load-bearing production KPI; the interactive-challenge rate; whether a Lever applicant email-verification step fires. Real-posting submits stay opt-in (firing live applications to real employers from a fabricated profile is out of scope).
 
 ## Ethics & legal note
 

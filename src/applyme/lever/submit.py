@@ -33,32 +33,53 @@ def _flagged_fields(tree: HTMLParser) -> list[str]:
     return list(dict.fromkeys(n for n in names if n))
 
 
+# Lever ships a hidden oversize-resume banner on EVERY apply page; its class is the bare `error-message`
+# and its identity is in the TEXT, so a class-only skip misses it and every non-/thanks page false-reads
+# as an error. Match these phrases to skip it. (Verified in a real leverdemo final.html, 2026-06-11.)
+_BENIGN_BANNER_MARKERS = ("exceeds the maximum upload size", "oversize")
+
+
 def _has_error_banner(tree: HTMLParser) -> bool:
-    """True if a POPULATED submit-error banner is present.
+    """True if a POPULATED, real submit-error banner is present.
 
     The bare `error-message` class is on every Lever page (a CSS rule plus a hidden oversize-resume
-    banner), so a substring test false-positives. We require a `p.error-message` with non-empty text
-    that is not the resume-oversize banner.
+    banner), so presence alone false-positives. We require a `p.error-message` with non-empty text that
+    is neither classed as the resume banner NOR carrying the always-present oversize-upload message.
     """
     for n in tree.css("p.error-message, .error-message"):
         cls = n.attributes.get("class") or ""
-        if "resume-upload" in cls or "oversize" in cls:
+        txt = (n.text() or "").strip()
+        if not txt:
             continue
-        if (n.text() or "").strip():
-            return True
+        low = txt.lower()
+        if "resume-upload" in cls or "oversize" in cls or any(m in low for m in _BENIGN_BANNER_MARKERS):
+            continue
+        return True
     return False
 
 
 def classify_outcome(final_url: str, http_status: int, body: str) -> Outcome:
     """Classify a form-submit response into SUCCESS / FAILED / CAPTCHA_BLOCKED / RETRYABLE_ERROR.
 
-    Success is driven by the reliable signal — a redirect to `/<co>/<id>/thanks` — not by a body
-    substring. Failure is read from the re-rendered form: a flagged required field, else a populated
-    error banner (same Lever message for bad-captcha and missing-required → reported as
-    CAPTCHA_BLOCKED only when no field is flagged).
+    Success is driven by the reliable signal — the post-submit navigation — not by a body substring.
+    Two accepted success redirects: a real posting lands on `/<co>/<id>/thanks`; a tenant without a
+    thanks page (e.g. `leverdemo`) bounces off the apply form to a Lever URL bearing a minted
+    application id (`…?LeverAppId=<uuid>`), which Lever issues only after the POST is accepted. Failure
+    is read from the re-rendered form: a flagged required field, else a populated error banner (same
+    Lever message for bad-captcha and missing-required → CAPTCHA_BLOCKED only when no field is flagged).
     """
-    if final_url.rstrip("/").endswith("/thanks"):
+    low = final_url.lower()
+    if low.rstrip("/").endswith("/thanks"):
         return Outcome("SUCCESS")
+    # leverdemo has no /<co>/<id>/thanks; a successful submit redirects off the form to e.g.
+    # www.lever.co/hp-b?LeverAppId=<uuid>. The id is minted only after the POST is accepted (captcha
+    # passed + required fields OK), so this redirect is an authoritative success — verified live 2026-06-11.
+    if "lever.co" in low and "leverappid=" in low:
+        return Outcome("SUCCESS")
+    # Lever redirects a repeat application for the same email+posting to /<co>/<id>/already-received —
+    # i.e. it WAS submitted (on an earlier run); a duplicate, not a failure. Verified live 2026-06-11.
+    if "/already-received" in low:
+        return Outcome("DUPLICATE_SUSPECTED", reason="already_applied")
     tree = HTMLParser(body)
     flagged = _flagged_fields(tree)
     if flagged:

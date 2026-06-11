@@ -11,10 +11,15 @@ is **synthetic** (a fabricated test profile — "Ethan Calder").
 | 3 | `3-padsplit-dry-run.png` | padsplit — Senior Copywriter | `DRY_RUN_READY` |
 | 4 | `4-skillerszone-dry-run.png` | skillerszone — Remote Data Entry | `DRY_RUN_READY` |
 | 5 | `5-theathletic-dry-run.png` | theathletic — Executive Producer | `DRY_RUN_READY` |
-| 6 | `6-leverdemo-submit-captcha-blocked.png` | leverdemo sandbox — **real submit** | `CAPTCHA_BLOCKED` (the silent-pass result — see [REPORT §4](../docs/REPORT.md)) |
+| 6 | `6-leverdemo-submit-success.png` | leverdemo sandbox — **real submit** | **`SUCCESS`** — invisible hCaptcha **silent-passed**, application accepted (see [REPORT §0/§4](../docs/REPORT.md)) |
 
 Rows 1–5 are dry-runs on the **real** target postings (fill + upload + answer, stop before POST — no
-application submitted). Row 6 is a real POST to Lever's `leverdemo` sandbox, exercising the invisible
-Enterprise hCaptcha at submit time → `captcha blocked`. All `jobs.lever.co` postings share one
-account-wide sitekey, so the 5 real postings would block identically (the submit is opt-in to avoid
-spamming employers). Full reasoning: [`docs/REPORT.md`](../docs/REPORT.md) §0 + §4.
+application submitted, so a fabricated profile never spams a real employer). Row 6 is a **real POST**
+to Lever's `leverdemo` sandbox: the headful bot **silent-passes the invisible Enterprise hCaptcha and
+submits** — `status: SUCCESS`, `silent_pass: true`, no challenge rendered. leverdemo has no `/thanks`
+page, so a successful submit redirects to `www.lever.co/hp-b?LeverAppId=<uuid>` (the screenshot shows
+that landing); Lever mints the `LeverAppId` only *after* accepting the POST, so it is an authoritative
+success. Reproduced with distinct app ids across runs. **Caveat:** leverdemo is a demo tenant and may
+score more permissively than a real company's Enterprise config; real-posting submit stays opt-in. The
+per-vacancy `result_string` for every run is in `output/results.json`. Full reasoning + the root-cause
+correction (the block was a submit-button bug, not the captcha): [`docs/REPORT.md`](../docs/REPORT.md) §0 + §4.

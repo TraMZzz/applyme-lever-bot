@@ -21,6 +21,9 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--headful", dest="headful", action="store_true", default=None)
     run.add_argument("--headless", dest="headful", action="store_false")
     run.add_argument("--max-applies", type=int, default=5)
+    # Per-vacancy wall-clock ceiling (seconds). Unset → Settings.per_apply_timeout_s (default 180).
+    # Raise it for sandbox/real measurement (e.g. 600) so the run reaches a verdict, not a timeout.
+    run.add_argument("--per-apply-timeout", dest="per_apply_timeout", type=float, default=None)
     return p
 
 
