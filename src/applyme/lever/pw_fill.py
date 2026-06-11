@@ -7,11 +7,13 @@ a Bézier mouse move to the field + per-character typing with log-normal delays.
 
 import asyncio
 import contextlib
+import difflib
 import random
 
 import structlog
 from patchright.async_api import Page
 
+from applyme.answers.llm import validate_choice
 from applyme.browser.human import jittered_point
 from applyme.browser.motion import MotionEngine
 from applyme.models import CandidateProfile, FormSpec
@@ -24,6 +26,25 @@ Point = tuple[float, float]
 def _css(value: str) -> str:
     """Escape a value for use inside a double-quoted CSS attribute selector."""
     return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _closest_option(answer: str, values: list[str]) -> str | None:
+    """Closest DOM option to `answer` by string similarity — a bounded last resort.
+
+    Used only after `validate_choice` finds no tolerant match: it bridges near-identical strings (the
+    parsed option vs the rendered radio `value` differing by whitespace/encoding) so a produced answer
+    still ticks its option. The 0.72 cutoff is deliberately high — a genuine paraphrase or a wrong
+    gradation stays unmatched (the field then fail-closes honestly rather than tick the wrong choice).
+    """
+    if not answer or not values:
+        return None
+
+    def norm(s: str) -> str:
+        return " ".join(s.lower().split())
+
+    a = norm(answer)
+    best = max(values, key=lambda v: difflib.SequenceMatcher(None, a, norm(v)).ratio())
+    return best if difflib.SequenceMatcher(None, a, norm(best)).ratio() >= 0.72 else None
 
 
 def _link_for_label(label: str, links: dict[str, str]) -> str | None:
@@ -143,7 +164,17 @@ async def _answer_card(page: Page, name: str, field_type: str, answer: str) -> N
     base = f'[name="{_css(name)}"]'
     with contextlib.suppress(Exception):
         if field_type in ("multiple-choice", "multiple-select"):
-            await page.check(f'{base}[value="{_css(answer)}"]', timeout=10000, force=True)
+            # The radio/checkbox `value` is the full option TEXT (often a long sentence with smart quotes).
+            # Building a `[value="…"]` selector from it is fragile (special chars / encoding) and fails
+            # silently. Instead read the option values, tolerant-match the answer in Python (validate_choice
+            # folds smart quotes / verbose replies), and check the matched element BY INDEX.
+            loc = page.locator(base)
+            values = [await loc.nth(i).get_attribute("value") or "" for i in range(await loc.count())]
+            chosen = validate_choice(answer, values) or _closest_option(answer, values)
+            if chosen and chosen in values:
+                await loc.nth(values.index(chosen)).check(timeout=10000, force=True)
+            else:
+                log.warning("card_answer_unmatched", field=name, answer=answer[:60], options=len(values))
         elif field_type == "dropdown":
             await page.select_option(base, label=answer, timeout=10000)
         else:  # text / textarea
