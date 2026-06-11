@@ -1,0 +1,30 @@
+{
+  "full_name": "Alex Doe",
+  "email": "alex.doe@example.com",
+  "phone": "9175550100",
+  "location": "New York, NY, United States",
+  "city": "New York",
+  "state": "NY",
+  "country": "United States",
+  "links": {
+    "linkedin": "https://www.linkedin.com/in/example",
+    "github": "https://github.com/example"
+  },
+  "work_authorized": true,
+  "requires_sponsorship": false,
+  "willing_to_relocate": false,
+  "expected_salary": 140000,
+  "expected_salary_currency": "USD",
+  "total_experience_years": 6,
+  "work_experience": [
+    {
+      "company": "Example Corp",
+      "title": "Senior Content Writer",
+      "start": "2021",
+      "end": "Present",
+      "description": "Owned editorial strategy and platform-specific content."
+    }
+  ],
+  "skills": ["Copywriting", "Editorial Strategy", "SEO", "Content Marketing"],
+  "resume_path": "data/resume.pdf"
+}

@@ -45,7 +45,7 @@ for each vacancy (sequential, log-normal inter-apply delay):
    upload resume (set_input_files) → Playwright auto-waits through /parseResume re-render → override standard fields
        fill cards (answers = rules.map(profile,cards) (+ llm fallback))
    trigger invisible hCaptcha: silent-pass → proceed
-        challenge renders → solve (≤90s, CapSolver→2Captcha) → inject h-captcha-response → proceed
+        token siteverify-rejected / challenge → solver FAILS CLOSED (no rqdata/dead market) → CAPTCHA_BLOCKED (§4)
    SUBMIT_MODE: dry-run → stop (DRY_RUN_READY) | sandbox → leverdemo | real → POST
    submit (human click; settle for silent-pass token; wait_for_load_state) ; classify outcome
    verify.poll_confirmation: best-effort mailbox poll (host-checked link) ; _capture (full-page screenshot + redacted HTML)
@@ -202,7 +202,7 @@ Detection: `SUCCESS` = redirect to `…/thanks`; failure = a 400 re-render (flag
 
 ## 7. Error handling & resilience
 
-- **`errors.py` hierarchy:** `ApplyError` → `RetryableError` {`NetworkError`, `CloudflareChallenge`, `SolverTimeout`} vs `PermanentError` {`SolverAuthError`, `SchemaUnmappedError`, `PayloadTooLargeError`, `AutofillConflict`, `WebDriverLeak`}. The split exists so retry logic can target `RetryableError` only — never a bad API key. (`tenacity` is a declared dep reserved for that filter; the MVP's resilience is the per-vacancy timeout below, not yet a tenacity retry loop.)
+- **`errors.py` hierarchy:** `ApplyError` → `RetryableError` {`SolverTimeout`} vs `PermanentError` {`SolverAuthError`, `SolverUnavailable`, `WebDriverLeak`}. The split lets the runner classify transient failures (`RETRYABLE_ERROR`) apart from permanent ones — never retrying a bad API key or a delisted solver. The MVP's resilience is the per-vacancy timeout below (no auto-retry loop).
 - **Classify, don't crash** — `runner.run_one` wraps each vacancy: `PermanentError` → `FAILED`, `TimeoutError`/anything else → `RETRYABLE_ERROR`; every divergence becomes an `ApplyResult`, never aborts the batch. `app.apply_fn` re-raises attempt failures as `PermanentError` so the wrapper classifies them.
 - **Timeout, not retry (MVP):** each vacancy runs under `asyncio.timeout(180s)` (`run_one`); fragile in-flow steps are best-effort under `contextlib.suppress`. Browser teardown is in `app_pw`'s `launch_playwright` `finally`. **`CancelledError` is never swallowed** (the catch-all is `except Exception`, not `BaseException`).
 - **Idempotency** — the `(normalized_email, company, posting_id)` dedupe ledger is **roadmap** (§11), not in the MVP.
@@ -226,7 +226,6 @@ The submit POST is double-gated: Cloudflare fingerprints TLS/JA4 + HTTP/2 *befor
 | core | `pydantic[email]` | `>=2.13` | models + `EmailStr` (needs `email-validator`) |
 | core | `pydantic-settings` | `>=2.14.1` | typed config from `.env` |
 | core | `selectolax` | `>=0.4.10` | fast, safe HTML parsing (form + 400 re-render + fixtures) |
-| quality | `tenacity` | `>=9.1.4` | bounded/jittered/filtered async retries |
 | quality | `structlog` | `>=26.1` | per-apply contextvars tracing |
 | feature | `2captcha-python` | `>=2.0.7` | fallback solver (`from twocaptcha import AsyncTwoCaptcha`) |
 | feature | `imap-tools` | `>=1.13` | confirmation-email evidence |

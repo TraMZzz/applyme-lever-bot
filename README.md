@@ -67,9 +67,9 @@ for each vacancy:
    answer custom "cards"
       │
       ▼
-   trigger hCaptcha:
+   trigger hCaptcha (invisible Enterprise):
       ├─ silent pass (clean session)            → submit
-      └─ interactive challenge → CapSolver/2Captcha token → submit
+      └─ token siteverify-rejected              → solver FAILS CLOSED (dead market / no rqdata) → CAPTCHA_BLOCKED
       │
       ▼
    detect outcome:
@@ -109,7 +109,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 │   │                            #   owns evidence capture (page.screenshot + page.content)
 │   ├── browser/
 │   │   ├── pw_engine.py         # patchright launch_persistent_context (real Chrome, no_viewport, locale/tz, proxy), webdriver-leak guard
-│   │   ├── preflight.py         # egress-IP reputation pre-flight (IPQualityScore) — gate a dirty IP before an attempt
+│   │   ├── preflight.py         # egress-IP reputation check (IPQualityScore) — used by the fingerprint_check diagnostic
 │   │   └── human.py             # log-normal delays, stdlib-Bézier mouse + scroll (via page.mouse)
 │   ├── lever/
 │   │   ├── form.py              # parse apply form + cards/baseTemplate JSON
@@ -133,6 +133,8 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the exact form fields, en
 │   ├── prepare_inputs.py        # inputs/ → data/
 │   ├── check_chrome.py          # smoke: drive Chrome on a live Lever page (no data/ or keys)
 │   └── fingerprint_check.py     # silent-pass readiness gate: score the session (CreepJS/incolumitas/IPQS/WebRTC) for free
+├── examples/                    # synthetic profile.example.json + vacancies.example.txt + resume.example.pdf (run from a clone)
+├── screenshots/                 # the 6 committed run shots (5 dry-run + leverdemo submit) — the brief's evidence
 ├── data/                        # generated: profile.json, resume.pdf, vacancies.txt (gitignored)
 ├── output/                      # results.json + per-attempt <company>/<id>/<label>.png+.html  (gitignored)
 ├── docs/  ├── ARCHITECTURE.md  └── REPORT.md
@@ -151,7 +153,16 @@ The bot reads three things, all **git-ignored** (supply them under `data/`):
 | `data/resume.pdf` | the résumé to upload | downloaded from the profile's `resume_url` |
 | `data/vacancies.txt` | Lever URLs, one per line | from `inputs/vacancies.md` |
 
-ApplyMe provides the raw material as `.md` in **`inputs/`** (and the résumé as a *URL*), so a one-shot prep step bridges `inputs/` → `data/`:
+**From a fresh clone (no provided inputs)** — synthetic examples ship in [`examples/`](examples/) so the bot runs immediately:
+
+```bash
+mkdir -p data
+cp examples/profile.example.json  data/profile.json
+cp examples/vacancies.example.txt data/vacancies.txt
+cp examples/resume.example.pdf    data/resume.pdf       # replace with a real résumé for a meaningful upload
+```
+
+**With the original take-home material** — ApplyMe provides the raw `.md` in **`inputs/`** (and the résumé as a *URL*), so a one-shot prep step bridges `inputs/` → `data/`:
 
 ```bash
 uv run python scripts/prepare_inputs.py
@@ -167,10 +178,12 @@ uv run python scripts/prepare_inputs.py
 
 ```bash
 # Python 3.12+. uv recommended, but NOT required for the grader:
-uv sync                       # OR:  pip install -e .
+uv sync                       # installs runtime + dev tooling (ruff / basedpyright / pytest)
+#   …or with pip:  pip install -e .       (runtime only — for the lint/type/test commands also run:
+#                  pip install ruff basedpyright pytest pytest-asyncio)
 uv run applyme run --help     # patchright drives your system Chrome (no separate browser download)
 
-cp .env.example .env          # add CAPSOLVER_API_KEY + mailbox creds (optional for a silent-pass run)
+cp .env.example .env          # ALL keys are OPTIONAL — a dry-run needs none (see "Keys" below)
 
 # Verify the engine actually drives Chrome — loads a live Lever page through Cloudflare, asserts
 # there's no `navigator.webdriver` leak, and parses the form. Needs nothing but Chrome (no data/, no keys):
@@ -184,7 +197,17 @@ uv run python scripts/fingerprint_check.py     # set JOOBLE_IPQS_API_KEY for the
 
 > **No local Chrome / headless box / CI?** Use [Docker](#docker-reproducible-browser-run) — one command builds a Chromium image and runs the same check.
 
-Key dependencies _(versions verified 2026-06)_ — **core:** `patchright>=1.60.1` (stealth Playwright fork — the browser engine; drives system Chrome via `executable_path`), `httpx>=0.28` (CapSolver REST), `pydantic[email]>=2.12` (`EmailStr` needs `email-validator`) + `pydantic-settings`, `selectolax` (safe HTML parsing); **quality:** `tenacity` (retries), `structlog` (tracing); **optional features:** `2captcha-python` (fallback solver), `imap-tools` (confirmation-email evidence). Human mouse/delays use **stdlib `random`/`math`** (no `numpy`). **Dev:** `ruff` (with `ASYNC` rules), `basedpyright` (strict on our code), `pytest` + `pytest-asyncio`.
+**Keys (`.env`) — all optional.** A dry-run (and the smoke test) need **no keys** — only system Chrome. Set these to enable optional features:
+
+| Key | Enables | Without it |
+|---|---|---|
+| `JOOBLE_LLM_API_KEY` | LLM fallback for novel free-text custom questions (Claude Haiku) | rules-only; an unmapped required question fails closed (`FORM_SCHEMA_UNMAPPED`) |
+| `JOOBLE_CAPSOLVER_API_KEY` / `JOOBLE_TWOCAPTCHA_API_KEY` | the solver fallback path | solver fails closed (it's empirically dead for Lever — §4); silent-pass only |
+| `JOOBLE_IMAP_*` | capture the post-submit confirmation email as evidence | confirmation poll skipped (never blocks a result) |
+| `JOOBLE_IPQS_API_KEY` | egress-IP reputation axis in `fingerprint_check.py` | that axis prints "unknown" and proceeds |
+| `JOOBLE_PROXY_*` · `JOOBLE_USER_DATA_DIR` · `JOOBLE_BROWSER_TIMEZONE` | silent-pass tuning (proxy exit, persistent profile, geo coherence) | direct home IP, default profile dir, system timezone |
+
+Key dependencies _(versions verified 2026-06)_ — **core:** `patchright>=1.60.1` (stealth Playwright fork — the browser engine; drives system Chrome via `executable_path`), `httpx>=0.28.1` (solver REST + IP pre-flight), `pydantic[email]>=2.13` (`EmailStr` needs `email-validator`) + `pydantic-settings`, `selectolax` (safe HTML parsing); **quality:** `structlog` (tracing); **optional features:** `2captcha-python` (fallback solver), `imap-tools` (confirmation-email evidence). Human mouse/delays use **stdlib `random`/`math`** (no `numpy`). **Dev** (installed by `uv sync`): `ruff` (with `ASYNC` rules), `basedpyright` (strict on our code), `pytest` + `pytest-asyncio`.
 
 ## Usage
 
@@ -203,7 +226,7 @@ uv run applyme run --vacancies data/vacancies.txt --profile data/profile.json --
 #   --max-applies N        cap the number of vacancies processed (default: 5)
 ```
 
-Outputs land in `output/`: `results.json` (one `ApplyResult` per vacancy, written incrementally) plus per-attempt evidence at `output/<company>/<posting_id>/<label>.png` (full-page screenshot) + `<label>.html` (redacted snapshot), where `<label>` is `dry-run`, `unmapped`, or `final`.
+Outputs land in `output/` (git-ignored): `results.json` (one `ApplyResult` per vacancy, written incrementally) plus per-attempt evidence at `output/<company>/<posting_id>/<label>.png` (full-page screenshot) + `<label>.html` (redacted snapshot), where `<label>` is `dry-run`, `unmapped`, or `final`. The **committed** copies of the 6 run shots are in [`screenshots/`](screenshots/) (see its README).
 
 ---
 
@@ -284,7 +307,7 @@ Each vacancy yields an `ApplyResult` with `status ∈ {SUCCESS, FAILED, CAPTCHA_
 |---|---|
 | Working script | `src/applyme/` |
 | Working code (repo/archive) | this repository |
-| Screenshots/video of 5 attempts | `output/<company>/<posting_id>/*.png` (full-page per attempt) |
+| Screenshots/video of 5 attempts | [`screenshots/`](screenshots/) — 5 dry-run shots on the real postings + the leverdemo submit (`captcha blocked`) |
 | Report: apply approach · captcha approach · frontend requests · failures · prod+X1000 | [`docs/REPORT.md`](docs/REPORT.md) |
 | Stack justification | this README + [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md#stack-rationale) |
 

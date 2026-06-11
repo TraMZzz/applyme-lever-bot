@@ -9,12 +9,16 @@ from pydantic import BaseModel, ConfigDict, EmailStr, Field, HttpUrl
 
 
 class SubmitMode(StrEnum):
+    """How far the apply flow goes: fill-only / sandbox POST (leverdemo) / real POST (live ATS)."""
+
     DRY_RUN = "dry-run"
     SANDBOX = "sandbox"
     REAL = "real"
 
 
 class WorkExperience(BaseModel):
+    """One résumé work-history entry (all fields optional)."""
+
     model_config = ConfigDict(extra="forbid")
     company: str | None = None
     title: str | None = None
@@ -24,6 +28,8 @@ class WorkExperience(BaseModel):
 
 
 class CandidateProfile(BaseModel):
+    """The candidate's data used to fill the apply form (parsed from the profile JSON)."""
+
     model_config = ConfigDict(extra="forbid")  # webhook_url etc. are rejected, never carried
     full_name: str
     email: EmailStr
@@ -45,6 +51,8 @@ class CandidateProfile(BaseModel):
 
 
 class Vacancy(BaseModel):
+    """One target posting (a jobs.lever.co URL split into company + posting_id)."""
+
     model_config = ConfigDict(extra="forbid")
     company: str
     posting_id: str
@@ -52,10 +60,13 @@ class Vacancy(BaseModel):
 
     @property
     def apply_url(self) -> str:
+        """The posting's `/apply` form URL."""
         return f"{str(self.url).rstrip('/')}/apply"
 
 
 class FieldRef(BaseModel):
+    """A standard form input (name/email/phone/location/…) located on the apply page."""
+
     input_name: str
     field_type: str
     required: bool
@@ -67,6 +78,8 @@ CardFieldType = Literal["multiple-choice", "multiple-select", "dropdown", "text"
 
 
 class CardField(BaseModel):
+    """One question inside a Lever custom-question "card" (typed; options carry the submit text)."""
+
     field_index: int
     field_type: CardFieldType
     text: str
@@ -76,11 +89,15 @@ class CardField(BaseModel):
 
 
 class Card(BaseModel):
+    """A Lever custom-question card (a `cards[<id>][baseTemplate]` block) and its fields."""
+
     card_id: str
     fields: list[CardField]
 
 
 class FormSpec(BaseModel):
+    """A parsed Lever apply page: standard fields, custom cards, the hCaptcha sitekey, and rqdata (if any)."""
+
     standard_fields: dict[str, FieldRef]
     cards: list[Card]
     sitekey: str
@@ -93,6 +110,8 @@ Status = Literal["SUCCESS", "FAILED", "CAPTCHA_BLOCKED", "DRY_RUN_READY", "DUPLI
 
 
 class ApplyResult(BaseModel):
+    """The per-vacancy outcome record — one row per apply, serialized to `output/results.json`."""
+
     posting_url: str
     company: str
     posting_id: str
@@ -118,6 +137,7 @@ class ApplyResult(BaseModel):
 
     @property
     def result_string(self) -> str:
+        """The brief-literal per-vacancy result: `success` / `failed:<reason>` / `captcha blocked` / …."""
         match self.status:
             case "SUCCESS":
                 return "success"

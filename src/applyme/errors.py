@@ -1,4 +1,4 @@
-"""Exception hierarchy: RetryableError is retried by tenacity; PermanentError is not."""
+"""Exception hierarchy: RetryableError marks transient failures; PermanentError is not retried."""
 
 
 class ApplyError(Exception):
@@ -6,23 +6,19 @@ class ApplyError(Exception):
 
 
 class RetryableError(ApplyError):
-    """Transient — safe to retry (network, Cloudflare managed challenge, solver timeout)."""
+    """Transient — safe to retry (network blip, solver timeout); classified RETRYABLE_ERROR by the runner."""
 
 
 class PermanentError(ApplyError):
-    """Do not retry (bad config/key, unmapped schema, oversize payload, autofill conflict)."""
+    """Do not retry (bad config/key, no usable solver, a detectable automation signal)."""
 
 
-class NetworkError(RetryableError): ...
+class SolverTimeout(RetryableError):
+    """A captcha solver did not return a token within the deadline."""
 
 
-class CloudflareChallenge(RetryableError): ...
-
-
-class SolverTimeout(RetryableError): ...
-
-
-class SolverAuthError(PermanentError): ...
+class SolverAuthError(PermanentError):
+    """A captcha solver rejected the request (bad key / config)."""
 
 
 class SolverUnavailable(PermanentError):
@@ -33,15 +29,6 @@ class SolverUnavailable(PermanentError):
     fresh per-challenge ``rqdata`` (+ IP-matched proxy) that an out-of-band solve can't supply. Permanent:
     never retried, and a clear signal to record ``captcha_blocked`` rather than inject an empty token.
     """
-
-
-class SchemaUnmappedError(PermanentError): ...
-
-
-class PayloadTooLargeError(PermanentError): ...
-
-
-class AutofillConflict(PermanentError): ...
 
 
 class WebDriverLeak(PermanentError):

@@ -24,6 +24,7 @@ LEVER = "https://jobs.lever.co/leverdemo/33538a2f-d27d-4a96-8f05-fa4b0e4d940e/ap
 
 
 async def main() -> None:
+    """Drive system Chrome to a live Lever page, assert no webdriver leak, and print the parsed form summary."""
     s = Settings()
     print(f"Chrome path : {find_chrome(s.chrome_path)}")
     print(f"Chrome ver  : {chrome_version(find_chrome(s.chrome_path))}")

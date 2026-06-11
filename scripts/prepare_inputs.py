@@ -124,12 +124,14 @@ def download_resume(md: str, dest: Path) -> bool:
 
 
 def write_vacancies(md: str, dest: Path) -> int:
+    """Extract every jobs.lever.co URL from vacancies.md into `dest`, one per line; return the count."""
     urls = re.findall(r"https://jobs\.lever\.co/[^\s<>\)]+", md)
     dest.write_text("\n".join(urls) + ("\n" if urls else ""))
     return len(urls)
 
 
 def main() -> None:
+    """Bridge the provided `inputs/*.md` to the bot's `data/` (profile.json, resume.pdf, vacancies.txt)."""
     DATA.mkdir(parents=True, exist_ok=True)
     if not (INPUTS / "profile.md").exists():
         sys.exit(f"missing {INPUTS / 'profile.md'} — place the provided files in inputs/")

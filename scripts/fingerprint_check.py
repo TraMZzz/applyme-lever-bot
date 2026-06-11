@@ -69,6 +69,7 @@ async def _exercise(page: Page, rng: random.Random) -> None:
 
 
 async def main() -> None:
+    """Score silent-pass readiness: IP reputation + automation-leak probe + screenshot the bot-detection tools."""
     s = Settings()
     rng = random.Random(0)
     out = Path("output/fpcheck")
@@ -113,7 +114,8 @@ async def main() -> None:
         for f in failures:
             print(f"  - {f}")
         print(
-            f"Review the screenshots in {out}/ (CreepJS trust≥85 & 0 lies, incolumitas behaviour≥0.5, all-green sannysoft)."
+            f"Review the screenshots in {out}/ "
+            "(CreepJS trust≥85 & 0 lies, incolumitas behaviour≥0.5, all-green sannysoft)."
         )
         raise SystemExit(1)
     print(f"PASS hard checks. Review {out}/ for the browser-scored tools, then confirm on a leverdemo sandbox submit.")
