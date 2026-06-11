@@ -2,17 +2,21 @@
 
 > **DRAFT** — the required short report. Sections 1, 2, 3, 4, 5 are written from verified research and live testing; the §0 result summary and the per-vacancy table are filled after the full 5-apply submit run. Deeper detail: [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
-## 0. Result summary _(filled after the run)_
+## 0. Result summary
+
+**5 / 5 forms fully prepared (`DRY_RUN_READY`)** against the real postings — a dry-run uploads the résumé, answers the custom questions, and fills every field, then **stops before the POST** (no application submitted). Run headless in Docker, 2026-06-11.
 
 | # | Company | Posting | Status | Reason | Captcha | Evidence |
 |---|---|---|---|---|---|---|
-| 1 | aledade | Staff AI Researcher | _TBD_ | | | |
-| 2 | raptv | _TBD_ | _TBD_ | | | |
-| 3 | padsplit | _TBD_ | _TBD_ | | | |
-| 4 | skillerszone | _TBD_ | _TBD_ | | | |
-| 5 | theathletic | _TBD_ | _TBD_ | | | |
+| 1 | aledade | Staff AI Researcher | `DRY_RUN_READY` | — | not reached (dry-run stops before submit) | `output/aledade/…/dry-run.png` |
+| 2 | raptv | Social Editor (Pop Hive) | `DRY_RUN_READY` | — | not reached | `output/raptv/…/dry-run.png` |
+| 3 | padsplit | Senior Copywriter (Fully Remote) | `DRY_RUN_READY` | — | not reached | `output/padsplit/…/dry-run.png` |
+| 4 | skillerszone | Remote Data Entry Specialist | `DRY_RUN_READY` | — | not reached | `output/skillerszone/…/dry-run.png` |
+| 5 | theathletic | Executive Producer, Live Streaming | `DRY_RUN_READY` | — | not reached | `output/theathletic/…/dry-run.png` |
 
-Statuses: `SUCCESS` (reached `/thanks`) · `FAILED:<reason>` · `CAPTCHA_BLOCKED`. Each row carries the brief-literal `result_string` (`success` / `failed:<reason>` / `captcha blocked`). Per-attempt evidence is a full-page screenshot (`output/<company>/<posting_id>/<label>.png`, labels `dry-run`/`unmapped`/`final`) and the matching redacted HTML snapshot (`<label>.html`), plus one `ApplyResult` per vacancy in `output/results.json` (written incrementally). **Committed evidence is generated on the `leverdemo` sandbox; real-posting runs are opt-in.**
+Two postings (raptv, padsplit) first failed `FORM_SCHEMA_UNMAPPED` on one required question each — surfacing two real answer-mapping gaps (a free-text work-authorization field that should be answered from the profile fact; option text with curly apostrophes the validator didn't normalize), both fixed (commit `dcb7f5d`), after which all five fill cleanly.
+
+On a **submit** run the statuses would be `SUCCESS` (reached `/thanks`) · `FAILED:<reason>` · `CAPTCHA_BLOCKED`, each row carrying the brief-literal `result_string` (`success` / `failed:<reason>` / `captcha blocked`). Per-attempt evidence is a full-page screenshot (`output/<company>/<posting_id>/<label>.png`, labels `dry-run`/`unmapped`/`final`) + the matching redacted HTML snapshot, plus one `ApplyResult` per vacancy in `output/results.json`. **The dry-run above submits nothing; a real submission is opt-in, and the committed submit-evidence is generated on Lever's `leverdemo` sandbox** — the invisible hCaptcha (and thus the silent-pass KPI) is only exercised at submit time.
 
 ### Task coverage (where each requirement is answered)
 
