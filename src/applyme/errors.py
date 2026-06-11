@@ -32,3 +32,7 @@ class PayloadTooLargeError(PermanentError): ...
 
 
 class AutofillConflict(PermanentError): ...
+
+
+class WebDriverLeak(PermanentError):
+    """navigator.webdriver was truthy — abort rather than apply with a detectable signal."""

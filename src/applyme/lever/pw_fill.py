@@ -12,7 +12,7 @@ import random
 import structlog
 from patchright.async_api import Page
 
-from applyme.browser.human import bezier_path, sample_delay
+from applyme.browser.human import bezier_path, jittered_point, sample_delay
 from applyme.models import CandidateProfile, FormSpec
 
 log = structlog.get_logger()
@@ -38,8 +38,7 @@ async def _human_fill(page: Page, rng: random.Random, cursor: Point, selector: s
     await loc.wait_for(state="visible", timeout=15000)
     box = await loc.bounding_box()
     if box:
-        tx = box["x"] + box["width"] * (0.5 + rng.uniform(-0.3, 0.3))
-        ty = box["y"] + box["height"] * (0.5 + rng.uniform(-0.3, 0.3))
+        tx, ty = jittered_point(box["x"], box["y"], box["width"], box["height"], rng)
         cursor = await _human_move(page, rng, cursor, tx, ty)
         await page.mouse.click(tx, ty)
     await loc.fill("")  # clear any parseResume autofill (auto-waits through the re-render)

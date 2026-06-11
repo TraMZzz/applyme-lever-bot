@@ -4,20 +4,19 @@
 
     uv run python scripts/check_chrome.py
 
-Needs nothing but Chrome (no data/, no API keys). Launches the real browser, loads a Lever apply
-page through Cloudflare, asserts no `navigator.webdriver` leak, and parses the form — i.e. verifies
-the engine actually drives Chrome end-to-end. If this prints OK, `applyme run` will work.
+Needs nothing but Chrome (no data/, no API keys). Launches the real browser via patchright, loads a
+Lever apply page through Cloudflare, asserts no `navigator.webdriver` leak, and parses the form —
+i.e. verifies the engine actually drives Chrome end-to-end. If this prints OK, `applyme run` will work.
 
 Reads the same env as the bot:
   JOOBLE_HEADFUL=false          → headless (use in a non-GUI / SSH / CI / container session)
-  JOOBLE_CHROME_NO_SANDBOX=true → disable Chrome's sandbox (root/containers); the engine also
-                                  auto-retries without the sandbox on a connect failure.
+  JOOBLE_CHROME_NO_SANDBOX=true → disable Chrome's sandbox (root/containers/CI)
   JOOBLE_CHROME_PATH=/path      → override Chrome location.
 """
 
 import asyncio
 
-from applyme.browser.engine import assert_no_webdriver_leak, launch_browser
+from applyme.browser.pw_engine import assert_no_webdriver_leak, launch_playwright
 from applyme.config import Settings, chrome_version, find_chrome
 from applyme.lever.form import parse_form_html
 
@@ -29,13 +28,13 @@ async def main() -> None:
     print(f"Chrome path : {find_chrome(s.chrome_path)}")
     print(f"Chrome ver  : {chrome_version(find_chrome(s.chrome_path))}")
     print(f"mode        : headful={s.headful} no_sandbox={s.chrome_no_sandbox}")
-    async with launch_browser(headful=s.headful, chrome_path=s.chrome_path, no_sandbox=s.chrome_no_sandbox) as browser:
-        tab = await browser.get(LEVER)
-        await asyncio.sleep(3)
-        await assert_no_webdriver_leak(tab)
-        spec = parse_form_html(await tab.get_content(), posting_url=LEVER)
+    async with launch_playwright(headful=s.headful, chrome_path=s.chrome_path, no_sandbox=s.chrome_no_sandbox) as page:
+        await page.goto(LEVER, wait_until="domcontentloaded", timeout=30000)
+        await page.wait_for_selector('[name="resume"]', state="attached", timeout=20000)
+        await assert_no_webdriver_leak(page)
+        spec = parse_form_html(await page.content(), posting_url=LEVER)
         print(
-            f"OK | url={tab.url} | navigator.webdriver=false | "
+            f"OK | url={page.url} | navigator.webdriver=false | "
             f"sitekey={spec.sitekey or 'NONE'} | standard_fields={len(spec.standard_fields)} | cards={len(spec.cards)}"
         )
 

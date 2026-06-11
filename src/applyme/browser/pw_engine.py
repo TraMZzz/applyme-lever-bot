@@ -45,6 +45,6 @@ async def launch_playwright(
 async def assert_no_webdriver_leak(page: Page) -> None:
     """Raise if navigator.webdriver is truthy — abort rather than apply with a detectable signal."""
     if await page.evaluate("navigator.webdriver"):
-        from applyme.browser.engine import WebDriverLeak
+        from applyme.errors import WebDriverLeak
 
         raise WebDriverLeak("navigator.webdriver is truthy")

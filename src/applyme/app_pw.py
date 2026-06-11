@@ -12,6 +12,7 @@ import contextlib
 import random
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal, cast
 
 import structlog
 
@@ -86,10 +87,17 @@ async def apply_one_pw(
         if unmapped:
             ev = await _capture(page, ev_dir, "unmapped")
             return ApplyResult(
-                posting_url=str(v.url), company=v.company, posting_id=v.posting_id,
-                status="FAILED", reason=f"FORM_SCHEMA_UNMAPPED:{unmapped[0]}", flagged_fields=unmapped,
-                rng_seed=rng_seed, screenshot_paths=[s for s in [ev.get("screenshot")] if s],
-                html_snapshot_path=ev.get("html"), started_at=started, finished_at=_now(),
+                posting_url=str(v.url),
+                company=v.company,
+                posting_id=v.posting_id,
+                status="FAILED",
+                reason=f"FORM_SCHEMA_UNMAPPED:{unmapped[0]}",
+                flagged_fields=unmapped,
+                rng_seed=rng_seed,
+                screenshot_paths=[s for s in [ev.get("screenshot")] if s],
+                html_snapshot_path=ev.get("html"),
+                started_at=started,
+                finished_at=_now(),
             )
 
         await pw_fill_form(page, spec, profile, answers, rng_seed)
@@ -97,24 +105,81 @@ async def apply_one_pw(
         if submit_mode in (SubmitMode.DRY_RUN, "dry-run"):
             ev = await _capture(page, ev_dir, "dry-run")
             return ApplyResult(
-                posting_url=str(v.url), company=v.company, posting_id=v.posting_id,
-                status="DRY_RUN_READY", rng_seed=rng_seed,
+                posting_url=str(v.url),
+                company=v.company,
+                posting_id=v.posting_id,
+                status="DRY_RUN_READY",
+                rng_seed=rng_seed,
                 screenshot_paths=[s for s in [ev.get("screenshot")] if s],
-                html_snapshot_path=ev.get("html"), started_at=started, finished_at=_now(),
+                html_snapshot_path=ev.get("html"),
+                started_at=started,
+                finished_at=_now(),
             )
 
-        # Submit (sandbox/real): trigger invisible hCaptcha + native form POST, then classify.
+        # Submit (sandbox/real): trigger the invisible hCaptcha; solve only if a challenge renders
+        # (silent-pass first), then let Lever's inline script fire the native multipart POST.
+        solver_used = cast(
+            "Literal['none', 'capsolver', 'twocaptcha']", await _submit_with_captcha(page, v, spec, settings)
+        )
         with contextlib.suppress(Exception):
-            await page.click("button[type=submit]", timeout=15000)
             await page.wait_for_load_state("networkidle", timeout=20000)
         final_url = page.url
         body = await page.content()
         outcome = classify_outcome(final_url=final_url, http_status=200, body=body)
+        confirmation_url = await _poll_confirmation(settings)
         ev = await _capture(page, ev_dir, "final")
         return ApplyResult(
-            posting_url=str(v.url), company=v.company, posting_id=v.posting_id,
-            status=outcome.status, reason=outcome.reason, flagged_fields=outcome.flagged_fields,
-            final_url=final_url, rng_seed=rng_seed,
+            posting_url=str(v.url),
+            company=v.company,
+            posting_id=v.posting_id,
+            status=outcome.status,
+            reason=outcome.reason,
+            flagged_fields=outcome.flagged_fields,
+            final_url=final_url,
+            solver_used=solver_used,
+            confirmation_email_url=confirmation_url,
+            rng_seed=rng_seed,
             screenshot_paths=[s for s in [ev.get("screenshot")] if s],
-            html_snapshot_path=ev.get("html"), started_at=started, finished_at=_now(),
+            html_snapshot_path=ev.get("html"),
+            started_at=started,
+            finished_at=_now(),
         )
+
+
+async def _submit_with_captcha(page: object, v: Vacancy, spec: object, settings: Settings) -> str:
+    """Click submit, wait for a silent-pass token, and only call a solver if a challenge renders."""
+    with contextlib.suppress(Exception):
+        await page.click("button[type=submit]", timeout=15000)  # type: ignore[attr-defined]
+    for _ in range(6):  # settle ~3s for the response field to self-fill (silent pass)
+        with contextlib.suppress(Exception):
+            if await page.eval_on_selector('[name="h-captcha-response"]', "e => e.value"):  # type: ignore[attr-defined]
+                return "none"
+        await asyncio.sleep(0.5)
+    ck = settings.capsolver_api_key.get_secret_value() if settings.capsolver_api_key else None
+    tk = settings.twocaptcha_api_key.get_secret_value() if settings.twocaptcha_api_key else None
+    if not (ck or tk):
+        return "none"
+    from applyme.captcha.base import solve_hcaptcha
+
+    with contextlib.suppress(Exception):
+        ua = str(await page.evaluate("navigator.userAgent"))  # type: ignore[attr-defined]
+        token, vendor = await solve_hcaptcha(
+            page_url=str(v.apply_url), ua=ua, rqdata=getattr(spec, "rqdata", None), capsolver_key=ck, twocaptcha_key=tk
+        )
+        await page.eval_on_selector('[name="h-captcha-response"]', "(e, v) => { e.value = v; }", token)  # type: ignore[attr-defined]
+        await page.click("button[type=submit]", timeout=15000)  # type: ignore[attr-defined]
+        return vendor
+    return "none"
+
+
+async def _poll_confirmation(settings: Settings) -> str | None:
+    """Best-effort: capture Lever's post-submit confirmation email as evidence (never blocks)."""
+    if not (settings.imap_user and settings.imap_password):
+        return None
+    from applyme.lever.verify import poll_confirmation
+
+    with contextlib.suppress(Exception):
+        return await poll_confirmation(
+            host=settings.imap_host, user=settings.imap_user, password=settings.imap_password.get_secret_value()
+        )
+    return None

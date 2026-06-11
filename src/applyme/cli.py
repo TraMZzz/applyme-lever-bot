@@ -21,7 +21,6 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument("--headful", dest="headful", action="store_true", default=None)
     run.add_argument("--headless", dest="headful", action="store_false")
     run.add_argument("--max-applies", type=int, default=5)
-    run.add_argument("--engine", choices=["patchright", "zendriver"], default=None)
     return p
 
 

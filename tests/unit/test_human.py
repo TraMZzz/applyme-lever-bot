@@ -1,8 +1,7 @@
 import math
 import random
 
-from applyme.browser.actions import jittered_point
-from applyme.browser.human import DELAY_CLASSES, bezier_path, sample_delay
+from applyme.browser.human import DELAY_CLASSES, bezier_path, jittered_point, sample_delay
 
 
 def test_path_starts_and_ends_at_targets():

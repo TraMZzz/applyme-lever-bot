@@ -21,6 +21,16 @@ def sample_delay(action: str, rng: random.Random) -> float:
     return min(hi, max(lo, rng.lognormvariate(math.log(median), sigma)))
 
 
+def jittered_point(left: float, top: float, width: float, height: float, rng: random.Random) -> Point:
+    """Return a point inside the box, biased toward centre (keeps clicks off the 1px edge).
+
+    Sampled within the inner ~60% of each axis so a small miss still lands inside the element.
+    """
+    fx = 0.5 + rng.uniform(-0.3, 0.3)
+    fy = 0.5 + rng.uniform(-0.3, 0.3)
+    return (left + width * fx, top + height * fy)
+
+
 def bezier_path(start: Point, end: Point, rng: random.Random) -> list[Point]:
     """Curved cubic-Bézier path with a perpendicular 'bow' and smoothstep easing."""
     (x0, y0), (x1, y1) = start, end
