@@ -57,7 +57,7 @@ async def check_egress_ip(ipqs_api_key: str | None) -> IpVerdict:
     Returns ``ok=True`` with reason ``unknown`` when no IPQS key is set (the caller proceeds — the gate is
     advisory unless the operator wants to hard-block on a dirty IP).
     """
-    async with httpx.AsyncClient(timeout=15) as h:
+    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as h:
         try:
             ip = (await h.get("https://api.ipify.org")).text.strip()
         except httpx.HTTPError as e:
@@ -65,7 +65,8 @@ async def check_egress_ip(ipqs_api_key: str | None) -> IpVerdict:
         if not ipqs_api_key:
             return IpVerdict(ok=True, ip=ip, fraud_score=None, reason="unknown (no IPQS key — pre-flight skipped)")
         try:
-            url = f"https://ipqualityscore.com/api/json/ip/{ipqs_api_key}/{ip}"
+            # Canonical host (www) — IPQS redirects bare → www, and httpx does not follow redirects by default.
+            url = f"https://www.ipqualityscore.com/api/json/ip/{ipqs_api_key}/{ip}"
             info = (await h.get(url, params={"strictness": 1, "allow_public_access_points": "true"})).json()
         except (httpx.HTTPError, ValueError) as e:
             return IpVerdict(ok=True, ip=ip, fraud_score=None, reason=f"IPQS lookup failed: {e}")
