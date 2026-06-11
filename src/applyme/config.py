@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="JOOBLE_", env_file=".env", extra="ignore", frozen=True)
     capsolver_api_key: SecretStr | None = None
     twocaptcha_api_key: SecretStr | None = None
+    captchasonic_api_key: SecretStr | None = None  # EXPERIMENTAL out-of-band hCaptcha-Enterprise test (REPORT §4)
     llm_api_key: SecretStr | None = None
     llm_model: str = "claude-haiku-4-5-20251001"
     imap_host: str = "imap.gmail.com"

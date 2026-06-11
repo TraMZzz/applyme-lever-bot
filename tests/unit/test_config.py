@@ -6,7 +6,7 @@ from applyme.config import ChromeNotFoundError, Settings, find_chrome
 def test_settings_loads_from_env(monkeypatch):
     monkeypatch.setenv("JOOBLE_CAPSOLVER_API_KEY", "secret123")
     monkeypatch.setenv("JOOBLE_IMAP_PASSWORD", "pw")
-    s = Settings()
+    s = Settings(_env_file=None)  # isolate from a developer .env so defaults are deterministic
     assert s.capsolver_api_key.get_secret_value() == "secret123"
     assert s.submit_mode == "dry-run"  # safe default
     assert "secret123" not in repr(s)  # SecretStr masks
